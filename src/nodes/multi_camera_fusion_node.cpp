@@ -1,6 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <message_filters/subscriber.h>
-#include <message_filters/time_synchronizer.h>
+#include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <custom_interface/msg/modified_float32_multi_array.hpp>
 #include <yolo_msgs/msg/detection_array.hpp>
@@ -49,137 +49,127 @@ public:
         fused_cones_pub_ = this->create_publisher<custom_interface::msg::ModifiedFloat32MultiArray>(
             config_.output_topic, qos);
         
-        // Create subscribers
-        cones_sub_ = this->create_subscription<custom_interface::msg::ModifiedFloat32MultiArray>(
-            config_.cones_topic, qos,
-            std::bind(&MultiCameraFusionNode::conesCallback, this, std::placeholders::_1));
-        
-        // Create YOLO detection subscribers for each camera
-        for (const auto& cam : config_.cameras) {
-            auto sub = this->create_subscription<yolo_msgs::msg::DetectionArray>(
-                cam.detections_topic, qos,
-                [this, cam_id = cam.id](const yolo_msgs::msg::DetectionArray::SharedPtr msg) {
-                    this->detectionCallback(cam_id, msg);
-                });
-            detection_subs_[cam.id] = sub;
-            
-            RCLCPP_INFO(this->get_logger(), "Subscribed to camera %s on topic: %s", 
-                       cam.id.c_str(), cam.detections_topic.c_str());
-        }
-        
-        // Initialize buffers
-        latest_cones_timestamp_ = rclcpp::Time(0);
+        // Setup message filters for time synchronization
+        setupMessageFilters();
         
         RCLCPP_INFO(this->get_logger(), "CALICO Multi-Camera Fusion Node initialized successfully");
-        RCLCPP_WARN(this->get_logger(), "Note: This is a placeholder implementation. Full fusion logic pending.");
     }
 
 private:
-    void conesCallback(const custom_interface::msg::ModifiedFloat32MultiArray::SharedPtr msg) {
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        latest_cones_ = msg;
-        latest_cones_timestamp_ = this->now();
+    void setupMessageFilters() {
+        // QoS for message filters
+        rmw_qos_profile_t qos_profile = rmw_qos_profile_default;
+        qos_profile.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
+        qos_profile.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+        qos_profile.depth = config_.history_depth;
         
-        // Try to process if we have recent detections
-        tryFusion();
-    }
-    
-    void detectionCallback(const std::string& camera_id, 
-                          const yolo_msgs::msg::DetectionArray::SharedPtr msg) {
-        std::lock_guard<std::mutex> lock(data_mutex_);
-        latest_detections_[camera_id] = msg;
-        latest_detection_timestamps_[camera_id] = this->now();
+        // Create cone subscriber
+        cones_sub_filter_ = std::make_shared<message_filters::Subscriber<custom_interface::msg::ModifiedFloat32MultiArray>>(
+            this, config_.cones_topic, qos_profile);
         
-        // Try to process if we have recent cones
-        tryFusion();
-    }
-    
-    void tryFusion() {
-        // Check if we have recent cone data
-        if (!latest_cones_ || 
-            (this->now() - latest_cones_timestamp_).seconds() > config_.sync_slop) {
-            return;
-        }
-        
-        // Check if we have recent detections from at least one camera
-        bool has_recent_detection = false;
+        // Create detection subscribers for each camera
         for (const auto& cam : config_.cameras) {
-            auto it = latest_detection_timestamps_.find(cam.id);
-            if (it != latest_detection_timestamps_.end() &&
-                (this->now() - it->second).seconds() <= config_.sync_slop) {
-                has_recent_detection = true;
-                break;
-            }
+            auto det_sub = std::make_shared<message_filters::Subscriber<yolo_msgs::msg::DetectionArray>>(
+                this, cam.detections_topic, qos_profile);
+            detection_sub_filters_.push_back(det_sub);
+            
+            RCLCPP_INFO(this->get_logger(), "Created synchronized subscriber for camera %s on topic: %s",
+                       cam.id.c_str(), cam.detections_topic.c_str());
         }
         
-        if (!has_recent_detection) {
-            return;
+        // Setup synchronizer based on number of cameras
+        if (config_.cameras.size() == 2) {
+            // 2 cameras + 1 cone topic
+            typedef message_filters::sync_policies::ApproximateTime<
+                custom_interface::msg::ModifiedFloat32MultiArray,
+                yolo_msgs::msg::DetectionArray,
+                yolo_msgs::msg::DetectionArray> SyncPolicy2;
+            
+            sync_2_ = std::make_shared<message_filters::Synchronizer<SyncPolicy2>>(
+                SyncPolicy2(config_.sync_queue_size), *cones_sub_filter_, 
+                *detection_sub_filters_[0], *detection_sub_filters_[1]);
+            
+            sync_2_->registerCallback(
+                std::bind(&MultiCameraFusionNode::syncCallback2, this,
+                         std::placeholders::_1, std::placeholders::_2, std::placeholders::_3));
+            
+            // Set the sync tolerance (slop)
+            sync_2_->setMaxIntervalDuration(rclcpp::Duration::from_seconds(config_.sync_slop));
+            
+            RCLCPP_INFO(this->get_logger(), "Setup 2-camera synchronizer with slop: %f seconds, queue: %d", 
+                       config_.sync_slop, config_.sync_queue_size);
+        } else {
+            RCLCPP_ERROR(this->get_logger(), "Only 2-camera configuration is currently supported");
+            throw std::runtime_error("Unsupported camera configuration");
         }
-        
-        // Perform fusion
-        performFusion();
     }
     
-    void performFusion() {
-        RCLCPP_DEBUG(this->get_logger(), "Performing fusion...");
+    void syncCallback2(const custom_interface::msg::ModifiedFloat32MultiArray::ConstSharedPtr& cone_msg,
+                      const yolo_msgs::msg::DetectionArray::ConstSharedPtr& det1_msg,
+                      const yolo_msgs::msg::DetectionArray::ConstSharedPtr& det2_msg) {
+        RCLCPP_DEBUG(this->get_logger(), "Synchronized callback triggered");
         
+        // Store messages in order
+        std::unordered_map<std::string, yolo_msgs::msg::DetectionArray::ConstSharedPtr> camera_detections;
+        camera_detections[config_.cameras[0].id] = det1_msg;
+        camera_detections[config_.cameras[1].id] = det2_msg;
+        
+        performFusion(cone_msg, camera_detections);
+    }
+    
+    void performFusion(const custom_interface::msg::ModifiedFloat32MultiArray::ConstSharedPtr& cone_msg,
+                      const std::unordered_map<std::string, yolo_msgs::msg::DetectionArray::ConstSharedPtr>& camera_detections) {
         // Convert messages to internal representation
-        auto cones = utils::MessageConverter::fromModifiedFloat32MultiArray(*latest_cones_);
+        auto cones = utils::MessageConverter::fromModifiedFloat32MultiArray(*cone_msg);
         
         // Convert YOLO detections for each camera
-        std::unordered_map<std::string, std::vector<utils::Detection>> camera_detections;
-        for (const auto& [cam_id, det_msg] : latest_detections_) {
+        std::unordered_map<std::string, std::vector<utils::Detection>> detections_internal;
+        for (const auto& [cam_id, det_msg] : camera_detections) {
             if (det_msg) {
-                camera_detections[cam_id] = utils::MessageConverter::fromDetectionArray(*det_msg);
+                detections_internal[cam_id] = utils::MessageConverter::fromDetectionArray(*det_msg);
+                RCLCPP_DEBUG(this->get_logger(), "Camera %s: %zu detections", 
+                           cam_id.c_str(), det_msg->detections.size());
             }
         }
         
         // Perform fusion
-        auto fused_cones = fusion_->fuse(cones, camera_detections);
+        auto fused_cones = fusion_->fuse(cones, detections_internal);
         
         // Convert result back to ROS message
         auto output_msg = utils::MessageConverter::toModifiedFloat32MultiArray(fused_cones);
-        output_msg.header.stamp = this->now();
-        output_msg.header.frame_id = latest_cones_->header.frame_id;
+        output_msg.header = cone_msg->header;  // Preserve original header
         
+        // Publish result
         fused_cones_pub_->publish(output_msg);
         
-        // Log some statistics
+        // Log statistics periodically
         static int fusion_count = 0;
         if (++fusion_count % 100 == 0) {
-            RCLCPP_INFO(this->get_logger(), "Processed %d fusion cycles", fusion_count);
-            
-            // Log fusion results
             int matched_cones = 0;
             for (const auto& cone : fused_cones) {
                 if (cone.color != "Unknown") {
                     matched_cones++;
                 }
             }
-            RCLCPP_INFO(this->get_logger(), "Matched %d/%zu cones with YOLO detections", 
-                       matched_cones, fused_cones.size());
             
-            // Debug camera detection info
-            for (const auto& [cam_id, det_msg] : latest_detections_) {
-                if (det_msg) {
-                    RCLCPP_INFO(this->get_logger(), "Camera %s: %zu YOLO detections", 
-                               cam_id.c_str(), det_msg->detections.size());
-                }
-            }
+            RCLCPP_INFO(this->get_logger(), 
+                       "Fusion cycle %d: %d/%zu cones matched with YOLO", 
+                       fusion_count, matched_cones, fused_cones.size());
             
-            // Debug fusion results per camera
+            // Log per-camera results
             auto& cam_results = fusion_->getCameraResults();
             for (const auto& [cam_id, result] : cam_results) {
                 int matched = 0;
                 for (int idx : result.matched_cone_indices) {
                     if (idx >= 0) matched++;
                 }
-                RCLCPP_INFO(this->get_logger(), "Camera %s fusion: %d matched, %zu unmatched",
+                RCLCPP_INFO(this->get_logger(), 
+                           "  Camera %s: %d matched, %zu unmatched",
                            cam_id.c_str(), matched, result.unmatched_cone_indices.size());
             }
         }
     }
-
+    
 private:
     // Configuration
     utils::CalicoConfig config_;
@@ -190,17 +180,16 @@ private:
     // Publishers
     rclcpp::Publisher<custom_interface::msg::ModifiedFloat32MultiArray>::SharedPtr fused_cones_pub_;
     
-    // Subscribers
-    rclcpp::Subscription<custom_interface::msg::ModifiedFloat32MultiArray>::SharedPtr cones_sub_;
-    std::unordered_map<std::string, 
-        rclcpp::Subscription<yolo_msgs::msg::DetectionArray>::SharedPtr> detection_subs_;
+    // Message filters for synchronization
+    std::shared_ptr<message_filters::Subscriber<custom_interface::msg::ModifiedFloat32MultiArray>> cones_sub_filter_;
+    std::vector<std::shared_ptr<message_filters::Subscriber<yolo_msgs::msg::DetectionArray>>> detection_sub_filters_;
     
-    // Data buffers
-    std::mutex data_mutex_;
-    custom_interface::msg::ModifiedFloat32MultiArray::SharedPtr latest_cones_;
-    rclcpp::Time latest_cones_timestamp_;
-    std::unordered_map<std::string, yolo_msgs::msg::DetectionArray::SharedPtr> latest_detections_;
-    std::unordered_map<std::string, rclcpp::Time> latest_detection_timestamps_;
+    // Synchronizers (only one will be used based on camera count)
+    typedef message_filters::sync_policies::ApproximateTime<
+        custom_interface::msg::ModifiedFloat32MultiArray,
+        yolo_msgs::msg::DetectionArray,
+        yolo_msgs::msg::DetectionArray> SyncPolicy2;
+    std::shared_ptr<message_filters::Synchronizer<SyncPolicy2>> sync_2_;
 };
 
 } // namespace calico

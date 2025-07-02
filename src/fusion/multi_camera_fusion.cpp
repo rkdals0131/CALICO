@@ -9,6 +9,13 @@ namespace fusion {
 MultiCameraFusion::MultiCameraFusion() 
     : matcher_(std::make_unique<HungarianMatcher>()),
       max_matching_distance_(50.0) {
+    
+    // Initialize T_sensor_to_lidar from Ouster OS1 documentation
+    // This transforms from os_sensor frame to os_lidar frame
+    T_sensor_to_lidar_ << -1,  0,  0,  0,
+                           0, -1,  0,  0,
+                           0,  0,  1, -0.038195,
+                           0,  0,  0,  1;
 }
 
 void MultiCameraFusion::initialize(const std::vector<utils::CameraConfig>& camera_configs) {
@@ -58,26 +65,23 @@ CameraFusionResult MultiCameraFusion::fuseForCamera(
         lidar_points.emplace_back(cone.x, cone.y, cone.z);
     }
     
+    // Compute T_sensor_to_cam = T_lidar_to_cam * T_sensor_to_lidar
+    // Since cones are in os_sensor frame, we need the full transformation
+    Eigen::Matrix4d T_sensor_to_cam = camera_config.extrinsic_matrix * T_sensor_to_lidar_;
+    
     // Project LiDAR points to camera image plane
-    auto projected_points = utils::ProjectionUtils::projectLidarToCamera(
+    // This now returns both projected points and their original indices
+    auto [projected_points, original_indices] = utils::ProjectionUtils::projectLidarToCamera(
         lidar_points,
         camera_config.camera_matrix,
         camera_config.dist_coeffs,
-        camera_config.extrinsic_matrix
+        T_sensor_to_cam
     );
     
-    // Create index mapping for projected points
     // Note: Python implementation doesn't filter by image bounds, only by Z > 0
-    std::vector<int> original_indices;
-    std::vector<cv::Point2f> filtered_points;
-    for (size_t i = 0; i < projected_points.size(); ++i) {
-        if (i < lidar_points.size()) {
-            filtered_points.push_back(projected_points[i]);
-            original_indices.push_back(i);
-        }
-    }
+    // The ProjectionUtils::projectLidarToCamera already filters Z > 0 and returns matching indices
     
-    if (filtered_points.empty()) {
+    if (projected_points.empty()) {
         // No points project into image
         RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
                     "Camera %s: No LiDAR points project into image (out of %zu points)",
@@ -90,11 +94,11 @@ CameraFusionResult MultiCameraFusion::fuseForCamera(
     
     RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
                 "Camera %s: %zu/%zu LiDAR points project into image, %zu YOLO detections",
-                camera_config.id.c_str(), filtered_points.size(), lidar_points.size(), yolo_detections.size());
+                camera_config.id.c_str(), projected_points.size(), lidar_points.size(), yolo_detections.size());
     
     // Convert projected points and YOLO detections to pairs for matching
     std::vector<std::pair<double, double>> proj_pairs;
-    for (const auto& pt : filtered_points) {
+    for (const auto& pt : projected_points) {
         proj_pairs.emplace_back(pt.x, pt.y);
     }
     
@@ -103,7 +107,7 @@ CameraFusionResult MultiCameraFusion::fuseForCamera(
         yolo_pairs.push_back(utils::MessageConverter::getDetectionCenter(det));
     }
     
-    // Compute cost matrix
+    // Compute cost matrix (YOLO detections as rows, projected points as columns)
     auto cost_matrix = HungarianMatcher::computeCostMatrix(yolo_pairs, proj_pairs);
     
     // Perform Hungarian matching
@@ -113,6 +117,10 @@ CameraFusionResult MultiCameraFusion::fuseForCamera(
     result.matched_cone_indices.resize(lidar_cones.size(), -1);
     result.matched_colors.resize(lidar_cones.size(), "Unknown");
     
+    RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
+                "Camera %s: Hungarian matching found %zu matches",
+                camera_config.id.c_str(), match_result.matches.size());
+    
     for (const auto& match : match_result.matches) {
         int yolo_idx = match.first;
         int proj_idx = match.second;
@@ -120,8 +128,15 @@ CameraFusionResult MultiCameraFusion::fuseForCamera(
         if (proj_idx < original_indices.size()) {
             int orig_cone_idx = original_indices[proj_idx];
             result.matched_cone_indices[orig_cone_idx] = yolo_idx;
-            result.matched_colors[orig_cone_idx] = 
-                utils::MessageConverter::mapClassToColor(yolo_detections[yolo_idx].class_name);
+            
+            std::string yolo_class = yolo_detections[yolo_idx].class_name;
+            std::string mapped_color = utils::MessageConverter::mapClassToColor(yolo_class);
+            result.matched_colors[orig_cone_idx] = mapped_color;
+            
+            RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
+                        "Camera %s: Matched cone %d with YOLO %d (class='%s' -> color='%s')",
+                        camera_config.id.c_str(), orig_cone_idx, yolo_idx, 
+                        yolo_class.c_str(), mapped_color.c_str());
         }
     }
     
@@ -142,13 +157,21 @@ std::vector<utils::Cone> MultiCameraFusion::mergeCameraResults(
     // Create output cones as copy of input
     std::vector<utils::Cone> fused_cones = lidar_cones;
     
+    // Initialize all colors to "Unknown" (matching Python behavior)
+    for (auto& cone : fused_cones) {
+        cone.color = "Unknown";
+    }
+    
     // Collect all matches for each cone
     std::unordered_map<int, std::vector<std::pair<std::string, std::string>>> cone_matches;
     
     for (const auto& [cam_id, result] : camera_results) {
         for (size_t i = 0; i < result.matched_cone_indices.size(); ++i) {
-            if (result.matched_cone_indices[i] >= 0) {
+            if (result.matched_cone_indices[i] >= 0 && i < result.matched_colors.size()) {
                 cone_matches[i].emplace_back(cam_id, result.matched_colors[i]);
+                RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
+                            "Camera %s matched cone %zu with color %s",
+                            cam_id.c_str(), i, result.matched_colors[i].c_str());
             }
         }
     }
@@ -156,9 +179,16 @@ std::vector<utils::Cone> MultiCameraFusion::mergeCameraResults(
     // Resolve conflicts and assign colors
     auto resolved_colors = resolveConflicts(cone_matches);
     
+    RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
+                "Resolved %zu cone colors from %zu camera results",
+                resolved_colors.size(), camera_results.size());
+    
     for (const auto& [cone_idx, color] : resolved_colors) {
         if (cone_idx < fused_cones.size()) {
             fused_cones[cone_idx].color = color;
+            RCLCPP_DEBUG(rclcpp::get_logger("multi_camera_fusion"),
+                        "Assigned color '%s' to cone %d",
+                        color.c_str(), cone_idx);
         }
     }
     
@@ -188,13 +218,18 @@ std::unordered_map<int, std::string> MultiCameraFusion::resolveConflicts(
             }
             
             // Find color with most votes
-            std::string best_color = "Unknown";
+            std::string best_color = "unknown";  // Start with lowercase
             int max_votes = 0;
             for (const auto& [color, votes] : color_votes) {
                 if (votes > max_votes) {
                     max_votes = votes;
                     best_color = color;
                 }
+            }
+            
+            // If we didn't find any color, use "Unknown" (capitalized) to match Python
+            if (max_votes == 0) {
+                best_color = "Unknown";
             }
             
             resolved[cone_idx] = best_color;

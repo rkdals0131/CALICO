@@ -36,9 +36,9 @@ public:
      * @param camera_matrix Camera intrinsic matrix (3x3)
      * @param dist_coeffs Camera distortion coefficients
      * @param extrinsic_matrix LiDAR to camera transformation matrix (4x4)
-     * @return Vector of 2D projected points
+     * @return Pair of: 1) Vector of 2D projected points, 2) Vector of original indices
      */
-    static std::vector<cv::Point2f> projectLidarToCamera(
+    static std::pair<std::vector<cv::Point2f>, std::vector<int>> projectLidarToCamera(
         const std::vector<Point3D>& lidar_points,
         const cv::Mat& camera_matrix,
         const cv::Mat& dist_coeffs,

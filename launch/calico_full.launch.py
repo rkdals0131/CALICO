@@ -90,19 +90,39 @@ def generate_launch_description():
         }]
     )
     
-    # Projection debug node (optional)
-    projection_debug_node = Node(
+    # Projection debug nodes (optional) - one for each camera
+    projection_debug_node_1 = Node(
         package='calico',
         executable='projection_debug_node',
-        name='calico_projection_debug',
+        name='calico_projection_debug_camera_1',
         output='screen',
         condition=IfCondition(enable_debug_viz),
         parameters=[{
             'config_file': config_file,
-            'camera_id': debug_camera_id,
+            'camera_id': 'camera_1',
             'sync_tolerance': 0.1,
             'circle_radius': 5
-        }]
+        }],
+        remappings=[
+            ('/debug/projection_overlay', '/debug/camera_1/projection_overlay'),
+        ]
+    )
+    
+    projection_debug_node_2 = Node(
+        package='calico',
+        executable='projection_debug_node',
+        name='calico_projection_debug_camera_2',
+        output='screen',
+        condition=IfCondition(enable_debug_viz),
+        parameters=[{
+            'config_file': config_file,
+            'camera_id': 'camera_2',
+            'sync_tolerance': 0.1,
+            'circle_radius': 5
+        }],
+        remappings=[
+            ('/debug/projection_overlay', '/debug/camera_2/projection_overlay'),
+        ]
     )
     
     return LaunchDescription([
@@ -114,5 +134,6 @@ def generate_launch_description():
         multi_camera_fusion_node,
         ukf_tracking_node,
         visualization_node,
-        projection_debug_node
+        projection_debug_node_1,
+        projection_debug_node_2
     ])

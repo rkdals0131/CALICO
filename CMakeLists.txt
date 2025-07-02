@@ -30,6 +30,8 @@ find_package(Eigen3 REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(kalman_filters REQUIRED)
 # OR-Tools is used directly without find_package due to protobuf issues
+# dlib for Hungarian algorithm fallback
+find_package(dlib REQUIRED)
 
 # Custom messages
 find_package(custom_interface REQUIRED)
@@ -86,7 +88,7 @@ add_library(calico_fusion SHARED
 target_link_libraries(calico_fusion
   calico_utils
   ${OpenCV_LIBS}
-  ortools
+  dlib::dlib
 )
 ament_target_dependencies(calico_fusion ${dependencies})
 

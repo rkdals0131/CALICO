@@ -148,6 +148,12 @@ std::string MessageConverter::mapClassToColor(const std::string& class_name) {
     // Map YOLO class names to cone colors (matching Python)
     // Python uses lowercase color names: "blue cone", "red cone", "yellow cone"
     static const std::unordered_map<std::string, std::string> class_to_color = {
+        // YOLO sends class names with spaces (e.g., "blue cone")
+        {"blue cone", "blue cone"},
+        {"yellow cone", "yellow cone"},
+        {"orange cone", "orange cone"},
+        {"red cone", "red cone"},
+        // Also support underscore versions
         {"Blue_Cone", "blue cone"},
         {"Yellow_Cone", "yellow cone"},
         {"Orange_Cone", "orange cone"},
@@ -163,7 +169,7 @@ std::string MessageConverter::mapClassToColor(const std::string& class_name) {
         return it->second;
     }
     
-    return "unknown";  // Python uses lowercase "unknown"
+    return "Unknown";  // Python uses "Unknown" (capitalized)
 }
 
 } // namespace utils

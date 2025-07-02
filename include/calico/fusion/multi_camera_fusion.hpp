@@ -99,6 +99,7 @@ private:
     std::unique_ptr<HungarianMatcher> matcher_;
     double max_matching_distance_;
     std::unordered_map<std::string, CameraFusionResult> camera_results_;
+    Eigen::Matrix4d T_sensor_to_lidar_;  // Transform from os_sensor to os_lidar frame
 };
 
 } // namespace fusion

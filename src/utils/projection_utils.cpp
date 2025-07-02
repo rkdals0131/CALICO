@@ -5,41 +5,43 @@
 namespace calico {
 namespace utils {
 
-std::vector<cv::Point2f> ProjectionUtils::projectLidarToCamera(
+std::pair<std::vector<cv::Point2f>, std::vector<int>> ProjectionUtils::projectLidarToCamera(
     const std::vector<Point3D>& lidar_points,
     const cv::Mat& camera_matrix,
     const cv::Mat& dist_coeffs,
     const Eigen::Matrix4d& extrinsic_matrix) {
     
     std::vector<cv::Point2f> projected_points;
+    std::vector<int> original_indices;
     
     if (lidar_points.empty()) {
-        return projected_points;
+        return std::make_pair(projected_points, original_indices);
     }
     
     // Transform LiDAR points to camera coordinate system
     std::vector<Point3D> camera_points = transformPoints(lidar_points, extrinsic_matrix);
     
-    // Convert to OpenCV format
+    // Convert to OpenCV format and track original indices
     std::vector<cv::Point3f> cv_points;
     cv_points.reserve(camera_points.size());
     
-    for (const auto& pt : camera_points) {
+    for (size_t i = 0; i < camera_points.size(); ++i) {
         // Only project points in front of the camera
-        if (pt.z > 1e-3) {  // 1mm minimum distance (same as Python)
-            cv_points.emplace_back(pt.x, pt.y, pt.z);
+        if (camera_points[i].z > 1e-3) {  // 1mm minimum distance (same as Python)
+            cv_points.emplace_back(camera_points[i].x, camera_points[i].y, camera_points[i].z);
+            original_indices.push_back(i);  // Store the original index
         }
     }
     
     if (cv_points.empty()) {
-        return projected_points;
+        return std::make_pair(projected_points, original_indices);
     }
     
     // Project points to image plane
     cv::projectPoints(cv_points, cv::Vec3d(0, 0, 0), cv::Vec3d(0, 0, 0),
                      camera_matrix, dist_coeffs, projected_points);
     
-    return projected_points;
+    return std::make_pair(projected_points, original_indices);
 }
 
 std::vector<Point3D> ProjectionUtils::transformPoints(

@@ -82,22 +82,22 @@ visualization_msgs::msg::Marker RVizMarkerPublisher::createConeMarker(
     marker.header.stamp = timestamp;
     marker.ns = "cones";
     marker.id = marker_id;
-    marker.type = visualization_msgs::msg::Marker::CYLINDER;
+    marker.type = visualization_msgs::msg::Marker::SPHERE;
     marker.action = visualization_msgs::msg::Marker::ADD;
     
     // Position
     marker.pose.position.x = cone.x;
     marker.pose.position.y = cone.y;
-    marker.pose.position.z = cone.z + cone_height_ / 2.0;  // Center of cylinder
+    marker.pose.position.z = cone.z;  // Center of sphere at cone position
     marker.pose.orientation.x = 0.0;
     marker.pose.orientation.y = 0.0;
     marker.pose.orientation.z = 0.0;
     marker.pose.orientation.w = 1.0;
     
-    // Scale
+    // Scale (for sphere, all dimensions should be equal)
     marker.scale.x = cone_radius_ * 2.0;
     marker.scale.y = cone_radius_ * 2.0;
-    marker.scale.z = cone_height_;
+    marker.scale.z = cone_radius_ * 2.0;
     
     // Color
     marker.color = getColor(cone.color);

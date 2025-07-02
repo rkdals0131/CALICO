@@ -2,13 +2,18 @@
 #include <limits>
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <rclcpp/rclcpp.hpp>
+#include <dlib/optimization/max_cost_assignment.h>
 
 namespace calico {
 namespace fusion {
 
 MatchResult HungarianMatcher::match(const Eigen::MatrixXd& cost_matrix, double max_distance) {
     MatchResult result;
+    
+    // Store max distance for use in solver
+    max_matching_distance_ = max_distance;
     
     if (cost_matrix.rows() == 0 || cost_matrix.cols() == 0) {
         // Empty cost matrix - no matches possible
@@ -52,38 +57,81 @@ Eigen::MatrixXd HungarianMatcher::computeCostMatrix(
 }
 
 std::vector<int> HungarianMatcher::solveHungarian(const Eigen::MatrixXd& cost_matrix) {
-    // Use Google OR-Tools for optimal assignment
     int n_rows = cost_matrix.rows();
     int n_cols = cost_matrix.cols();
     
-    // Create the assignment solver
-    operations_research::SimpleLinearSumAssignment assignment;
+    // Handle empty matrix
+    if (n_rows == 0 || n_cols == 0) {
+        return std::vector<int>(n_rows, -1);
+    }
     
-    // Scale costs to integers (OR-Tools works with integer costs)
-    const int64_t scale_factor = 1000000; // Scale to preserve 6 decimal places
+    // dlib requires square matrix or more columns than rows
+    // If we have more rows than columns, we need to handle it differently
+    if (n_rows > n_cols) {
+        // Add dummy columns with high cost
+        Eigen::MatrixXd padded_matrix(n_rows, n_rows);
+        padded_matrix.leftCols(n_cols) = cost_matrix;
+        padded_matrix.rightCols(n_rows - n_cols).setConstant(max_matching_distance_ * 10);
+        
+        // Solve with padded matrix (recursive call)
+        auto padded_result = solveHungarian(padded_matrix);
+        
+        // Remove assignments to dummy columns
+        std::vector<int> result(n_rows, -1);
+        for (int i = 0; i < n_rows; ++i) {
+            if (padded_result[i] >= 0 && padded_result[i] < n_cols) {
+                result[i] = padded_result[i];
+            }
+        }
+        return result;
+    }
     
-    // Add arcs with costs
+    // dlib uses max-cost assignment, so we need to negate the costs
+    // First find the maximum value to ensure all values are positive after transformation
+    double max_val = cost_matrix.maxCoeff();
+    
+    // Create dlib matrix (must use integer type)
+    dlib::matrix<long> dlib_cost(n_rows, n_cols);
+    
+    // Scale factor for converting double to integer
+    const long scale = 1000;
+    
+    // Convert Eigen matrix to dlib matrix with negated costs
     for (int i = 0; i < n_rows; ++i) {
         for (int j = 0; j < n_cols; ++j) {
-            // Scale and convert to integer
-            int64_t cost = static_cast<int64_t>(cost_matrix(i, j) * scale_factor);
-            assignment.AddArcWithCost(i, j, cost);
+            // Transform min-cost to max-cost problem
+            // Use max_val - cost to ensure positive values
+            // Scale to integer
+            double cost_normalized = max_val - cost_matrix(i, j);
+            // Ensure non-negative values
+            if (cost_normalized < 0) cost_normalized = 0;
+            dlib_cost(i, j) = static_cast<long>(cost_normalized * scale);
         }
     }
     
-    // Solve the assignment problem
-    operations_research::SimpleLinearSumAssignment::Status status = assignment.Solve();
+    // Solve using dlib
+    std::vector<long> dlib_assignments;
+    try {
+        // dlib::max_cost_assignment returns the assignment vector directly
+        dlib_assignments = dlib::max_cost_assignment(dlib_cost);
+        RCLCPP_DEBUG(rclcpp::get_logger("hungarian_matcher"),
+                    "dlib assignment completed successfully for %dx%d matrix", n_rows, n_cols);
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(rclcpp::get_logger("hungarian_matcher"),
+                    "dlib max_cost_assignment failed for %dx%d matrix: %s", 
+                    n_rows, n_cols, e.what());
+        return std::vector<int>(n_rows, -1);
+    }
     
+    // Convert back to our format
     std::vector<int> assignments(n_rows, -1);
-    
-    if (status == operations_research::SimpleLinearSumAssignment::OPTIMAL) {
-        // Extract assignments
-        for (int i = 0; i < n_rows; ++i) {
-            assignments[i] = assignment.RightMate(i);
+    for (size_t i = 0; i < dlib_assignments.size() && i < static_cast<size_t>(n_rows); ++i) {
+        if (dlib_assignments[i] >= 0 && dlib_assignments[i] < n_cols) {
+            // Check if the original cost is within threshold
+            if (cost_matrix(i, dlib_assignments[i]) <= max_matching_distance_) {
+                assignments[i] = static_cast<int>(dlib_assignments[i]);
+            }
         }
-    } else {
-        RCLCPP_WARN(rclcpp::get_logger("hungarian_matcher"), 
-                    "Hungarian algorithm did not find optimal solution");
     }
     
     return assignments;

@@ -4,6 +4,7 @@
 #include <cctype>
 #include <rclcpp/rclcpp.hpp>
 #include <Eigen/Cholesky>
+#include <unordered_map>
 
 namespace calico {
 namespace tracking {
@@ -179,8 +180,13 @@ void Track::update(double x, double y, double z, const std::string& color) {
 }
 
 void Track::updateColorHistory(const std::string& color) {
-    if (color != "Unknown") {
-        color_history_.push_back(color);
+    // Convert to lowercase for consistency
+    std::string lowercase_color = color;
+    std::transform(lowercase_color.begin(), lowercase_color.end(), 
+                   lowercase_color.begin(), ::tolower);
+    
+    if (lowercase_color != "unknown" && !lowercase_color.empty()) {
+        color_history_.push_back(lowercase_color);
         if (color_history_.size() > MAX_COLOR_HISTORY) {
             color_history_.pop_front();
         }
@@ -197,7 +203,7 @@ Eigen::Vector2d Track::getVelocity() const {
 
 std::string Track::getColor() const {
     if (color_history_.empty()) {
-        return "Unknown";
+        return "unknown";
     }
     
     // Count occurrences of each color
@@ -216,20 +222,8 @@ std::string Track::getColor() const {
         }
     }
     
-    // Capitalize first letter to match Python output
-    if (best_color != "unknown" && !best_color.empty()) {
-        std::string result = best_color;
-        result[0] = std::toupper(result[0]);
-        // Handle "blue cone" -> "Blue cone" format
-        for (size_t i = 1; i < result.length(); ++i) {
-            if (result[i-1] == ' ' && i < result.length()) {
-                result[i] = std::toupper(result[i]);
-            }
-        }
-        return result;
-    }
-    
-    return "Unknown";
+    // Return lowercase color to match visualization color map
+    return best_color;
 }
 
 } // namespace tracking

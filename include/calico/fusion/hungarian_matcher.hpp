@@ -4,7 +4,6 @@
 #include <vector>
 #include <utility>
 #include <Eigen/Core>
-#include <ortools/graph/assignment.h>
 
 namespace calico {
 namespace fusion {
@@ -50,11 +49,12 @@ public:
     
 private:
     /**
-     * @brief Internal Hungarian algorithm implementation
+     * @brief Internal Hungarian algorithm implementation using dlib
      * @param cost_matrix Input cost matrix
      * @return Vector of assignments (row_idx -> col_idx)
      */
     std::vector<int> solveHungarian(const Eigen::MatrixXd& cost_matrix);
+    
     
     /**
      * @brief Filter matches based on maximum distance threshold
@@ -66,6 +66,9 @@ private:
     MatchResult filterMatches(const std::vector<int>& assignments,
                              const Eigen::MatrixXd& cost_matrix,
                              double max_distance);
+                             
+private:
+    double max_matching_distance_ = 50.0;  // Default max distance
 };
 
 } // namespace fusion
