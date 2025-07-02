@@ -1,5 +1,10 @@
 # CALICO - Cone Attribute Linking by Image and Cluster Output
 
+<div align="left">
+  <img src="docs/Calico.png" alt="CALICO 마스코트" width="200"/>
+  <h2>C++ 센서 융합 패키지</h2>
+</div>
+
 고성능 C++ 센서 융합 패키지로, 자율주행 레이싱을 위한 YOLO 객체 검출과 LiDAR 포인트 클라우드 데이터를 결합합니다.
 
 ## 개요
