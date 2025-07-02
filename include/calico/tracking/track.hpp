@@ -4,6 +4,7 @@
 #include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <Eigen/Core>
 #include <Eigen/Dense>
 
@@ -23,17 +24,27 @@ public:
      * @param initial_x Initial X position
      * @param initial_y Initial Y position
      * @param initial_z Initial Z position (not filtered)
+     * @param imu_to_sensor_transform 4x4 transform from IMU to sensor frame
+     * @param p_initial_pos Initial position covariance
+     * @param p_initial_vel Initial velocity covariance
+     * @param r_measurement Measurement noise
+     * @param q_pos Position process noise
+     * @param q_vel Velocity process noise
      */
-    Track(int track_id, double initial_x, double initial_y, double initial_z);
+    Track(int track_id, double initial_x, double initial_y, double initial_z,
+          const Eigen::Matrix4d& imu_to_sensor_transform = Eigen::Matrix4d::Identity(),
+          double p_initial_pos = 0.001, double p_initial_vel = 100.0,
+          double r_measurement = 0.1, double q_pos = 0.1, double q_vel = 0.1);
     ~Track() = default;
     
     /**
-     * @brief Predict next state using motion model
+     * @brief Predict next state using motion model with IMU compensation
      * @param dt Time delta since last update
-     * @param ax Optional X acceleration (from IMU)
-     * @param ay Optional Y acceleration (from IMU)
+     * @param angular_velocity 3D angular velocity from IMU (rad/s)
+     * @param linear_acceleration 3D linear acceleration from IMU (m/s²)
      */
-    void predict(double dt, double ax = 0.0, double ay = 0.0);
+    void predict(double dt, const Eigen::Vector3d& angular_velocity = Eigen::Vector3d::Zero(),
+                const Eigen::Vector3d& linear_acceleration = Eigen::Vector3d::Zero());
     
     /**
      * @brief Update state with new measurement
@@ -98,13 +109,32 @@ public:
      */
     void incrementTimeSinceUpdate() { time_since_update_++; }
     
+    /**
+     * @brief Set measurement noise (R matrix)
+     * @param r_measurement New measurement noise value
+     */
+    void setMeasurementNoise(double r_measurement);
+    
+    /**
+     * @brief Set process noise (Q matrix)
+     * @param q_pos Position process noise
+     * @param q_vel Velocity process noise
+     */
+    void setProcessNoise(double q_pos, double q_vel);
+    
 private:
     /**
      * @brief Initialize UKF parameters
      * @param x Initial X position
      * @param y Initial Y position
+     * @param p_initial_pos Initial position covariance
+     * @param p_initial_vel Initial velocity covariance
+     * @param r_measurement Measurement noise
+     * @param q_pos Position process noise
+     * @param q_vel Velocity process noise
      */
-    void initializeUKF(double x, double y);
+    void initializeUKF(double x, double y, double p_initial_pos, double p_initial_vel,
+                       double r_measurement, double q_pos, double q_vel);
     
     /**
      * @brief Generate sigma points for UKF
@@ -113,15 +143,16 @@ private:
     Eigen::MatrixXd generateSigmaPoints();
     
     /**
-     * @brief Predict sigma points through motion model
+     * @brief Predict sigma points through motion model with IMU compensation
      * @param sigma_points Input sigma points
      * @param dt Time delta
-     * @param ax X acceleration
-     * @param ay Y acceleration
+     * @param omega_imu Angular velocity in IMU frame
+     * @param accel_imu Linear acceleration in IMU frame
      * @return Predicted sigma points
      */
     Eigen::MatrixXd predictSigmaPoints(const Eigen::MatrixXd& sigma_points,
-                                      double dt, double ax, double ay);
+                                      double dt, const Eigen::Vector3d& omega_imu,
+                                      const Eigen::Vector3d& accel_imu);
     
     /**
      * @brief Compute weights for sigma points
@@ -159,9 +190,17 @@ private:
     // Z coordinate (not filtered)
     double z_;
     
+    // IMU to sensor transform
+    Eigen::Matrix4d T_imu_to_sensor_;
+    Eigen::Matrix3d R_imu_to_sensor_;
+    Eigen::Vector3d t_imu_to_sensor_;
+    
     // Color history for voting
     std::deque<std::string> color_history_;
+    std::unordered_map<std::string, int> color_counts_;
+    std::string definite_color_;
     static constexpr size_t MAX_COLOR_HISTORY = 20;
+    static constexpr int COLOR_CONFIDENCE_THRESHOLD = 3;
 };
 
 } // namespace tracking

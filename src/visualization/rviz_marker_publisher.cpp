@@ -1,5 +1,6 @@
 #include "calico/visualization/rviz_marker_publisher.hpp"
 #include <rclcpp/rclcpp.hpp>
+#include <set>
 
 namespace calico {
 namespace visualization {
@@ -11,18 +12,23 @@ RVizMarkerPublisher::RVizMarkerPublisher()
       show_color_labels_(false),
       last_marker_count_(0) {
     
-    // Initialize default color mappings (matching Python lowercase format)
+    // Initialize default color mappings
+    // Lowercase versions (Python fusion output)
     color_map_["blue cone"] = ConeColor(0.0f, 0.0f, 1.0f, 1.0f);
     color_map_["yellow cone"] = ConeColor(1.0f, 1.0f, 0.0f, 1.0f);
-    color_map_["orange cone"] = ConeColor(1.0f, 0.5f, 0.0f, 1.0f);
     color_map_["red cone"] = ConeColor(1.0f, 0.0f, 0.0f, 1.0f);
     color_map_["unknown"] = ConeColor(0.5f, 0.5f, 0.5f, 0.8f);
-    // Also support capitalized versions
+    
+    // Capitalized versions (Python/C++ UKF output)
+    color_map_["Blue Cone"] = ConeColor(0.0f, 0.0f, 1.0f, 1.0f);
+    color_map_["Yellow Cone"] = ConeColor(1.0f, 1.0f, 0.0f, 1.0f);
+    color_map_["Red Cone"] = ConeColor(1.0f, 0.0f, 0.0f, 1.0f);
+    color_map_["Unknown"] = ConeColor(0.5f, 0.5f, 0.5f, 0.8f);
+    
+    // Single word versions for compatibility
     color_map_["Blue"] = ConeColor(0.0f, 0.0f, 1.0f, 1.0f);
     color_map_["Yellow"] = ConeColor(1.0f, 1.0f, 0.0f, 1.0f);
-    color_map_["Orange"] = ConeColor(1.0f, 0.5f, 0.0f, 1.0f);
     color_map_["Red"] = ConeColor(1.0f, 0.0f, 0.0f, 1.0f);
-    color_map_["Unknown"] = ConeColor(0.5f, 0.5f, 0.5f, 0.8f);
 }
 
 visualization_msgs::msg::MarkerArray RVizMarkerPublisher::createMarkerArray(
@@ -197,6 +203,14 @@ std_msgs::msg::ColorRGBA RVizMarkerPublisher::getColor(const std::string& color_
         color.b = it->second.b;
         color.a = it->second.a;
     } else {
+        // Log unrecognized color for debugging
+        static std::set<std::string> logged_colors;
+        if (logged_colors.find(color_name) == logged_colors.end()) {
+            RCLCPP_WARN(rclcpp::get_logger("rviz_marker_publisher"),
+                       "Unrecognized color: '%s', using gray", color_name.c_str());
+            logged_colors.insert(color_name);
+        }
+        
         // Default to gray for unknown colors
         color.r = 0.5;
         color.g = 0.5;

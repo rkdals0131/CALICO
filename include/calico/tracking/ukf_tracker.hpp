@@ -4,6 +4,7 @@
 #include <memory>
 #include <vector>
 #include <unordered_map>
+#include <Eigen/Core>
 #include "calico/tracking/track.hpp"
 #include "calico/utils/message_converter.hpp"
 #include "calico/fusion/hungarian_matcher.hpp"
@@ -20,17 +21,24 @@ struct UKFConfig {
     double q_vel = 0.1;      // Velocity process noise
     
     // Measurement noise parameters  
-    double r_pos = 0.5;      // Position measurement noise
+    double r_pos = 0.1;      // Position measurement noise (matching Python)
+    
+    // Initial state covariance
+    double p_initial_pos = 0.001;  // Initial position uncertainty
+    double p_initial_vel = 100.0;  // Initial velocity uncertainty
     
     // UKF parameters
-    double alpha = 0.001;    // Spread of sigma points
+    double alpha = 0.1;      // Spread of sigma points (matching Python)
     double beta = 2.0;       // Prior knowledge of distribution
-    double kappa = 0.0;      // Secondary scaling parameter
+    double kappa = -1.0;     // Secondary scaling parameter (3 - dim_x)
     
     // Track management
-    int max_age_before_deletion = 10;
+    int max_age_before_deletion = 4;  // Matching Python
     int min_hits_before_confirmation = 3;
-    double max_association_distance = 2.0;
+    double max_association_distance = 0.7;  // Matching Python
+    
+    // IMU to sensor transform
+    Eigen::Matrix4d imu_to_sensor_transform = Eigen::Matrix4d::Identity();
 };
 
 /**
@@ -64,6 +72,9 @@ public:
      * @brief Get all active tracks
      * @return Map of track ID to track object
      */
+    std::unordered_map<int, std::shared_ptr<Track>>& 
+    getTracks() { return tracks_; }
+    
     const std::unordered_map<int, std::shared_ptr<Track>>& 
     getTracks() const { return tracks_; }
     
@@ -72,6 +83,12 @@ public:
      * @param config New configuration
      */
     void setConfig(const UKFConfig& config) { config_ = config; }
+    
+    /**
+     * @brief Get current UKF configuration
+     * @return Current configuration
+     */
+    const UKFConfig& getConfig() const { return config_; }
     
     /**
      * @brief Reset tracker, removing all tracks

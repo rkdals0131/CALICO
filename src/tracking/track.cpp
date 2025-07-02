@@ -9,29 +9,44 @@
 namespace calico {
 namespace tracking {
 
-Track::Track(int track_id, double initial_x, double initial_y, double initial_z)
-    : track_id_(track_id), age_(0), hit_count_(0), time_since_update_(0), z_(initial_z) {
+Track::Track(int track_id, double initial_x, double initial_y, double initial_z,
+             const Eigen::Matrix4d& imu_to_sensor_transform,
+             double p_initial_pos, double p_initial_vel,
+             double r_measurement, double q_pos, double q_vel)
+    : track_id_(track_id), age_(0), hit_count_(0), time_since_update_(0), z_(initial_z),
+      T_imu_to_sensor_(imu_to_sensor_transform), definite_color_("") {
+    
+    // Extract rotation and translation from transform
+    R_imu_to_sensor_ = T_imu_to_sensor_.block<3, 3>(0, 0);
+    t_imu_to_sensor_ = T_imu_to_sensor_.block<3, 1>(0, 3);
     
     // Initialize UKF parameters
-    initializeUKF(initial_x, initial_y);
+    initializeUKF(initial_x, initial_y, p_initial_pos, p_initial_vel,
+                  r_measurement, q_pos, q_vel);
     
     // Initialize color history
     color_history_.clear();
+    color_counts_.clear();
+    color_counts_["unknown"] = 0;
+    color_counts_["blue cone"] = 0;
+    color_counts_["red cone"] = 0;
+    color_counts_["yellow cone"] = 0;
 }
 
-void Track::initializeUKF(double x, double y) {
+void Track::initializeUKF(double x, double y, double p_initial_pos, double p_initial_vel,
+                         double r_measurement, double q_pos, double q_vel) {
     // State: [x, y, vx, vy]
     state_ = Eigen::Vector4d(x, y, 0.0, 0.0);
     
-    // Initial covariance (matching Python defaults)
+    // Initial covariance
     covariance_ = Eigen::Matrix4d::Identity();
-    covariance_.block<2, 2>(0, 0) *= 0.001;  // P_initial_pos = 0.001
-    covariance_.block<2, 2>(2, 2) *= 100.0;  // P_initial_vel = 100.0
+    covariance_.block<2, 2>(0, 0) *= p_initial_pos;
+    covariance_.block<2, 2>(2, 2) *= p_initial_vel;
     
-    // UKF parameters
-    alpha_ = 0.001;
+    // UKF parameters (matching Python defaults)
+    alpha_ = 0.1;  // Changed from 0.001 to match Python
     beta_ = 2.0;
-    kappa_ = 0.0;
+    kappa_ = 3.0 - STATE_DIM;  // Matching Python: (3.0 - dim_x)
     lambda_ = alpha_ * alpha_ * (STATE_DIM + kappa_) - STATE_DIM;
     
     // Compute weights
@@ -39,11 +54,11 @@ void Track::initializeUKF(double x, double y) {
     
     // Process noise
     Q_ = Eigen::Matrix4d::Identity();
-    Q_.block<2, 2>(0, 0) *= 0.1;  // Position process noise
-    Q_.block<2, 2>(2, 2) *= 1.0;  // Velocity process noise
+    Q_.block<2, 2>(0, 0) *= q_pos;  // Position process noise
+    Q_.block<2, 2>(2, 2) *= q_vel;  // Velocity process noise
     
     // Measurement noise
-    R_ = Eigen::Matrix2d::Identity() * 0.5;
+    R_ = Eigen::Matrix2d::Identity() * r_measurement;
 }
 
 void Track::computeWeights() {
@@ -60,12 +75,14 @@ void Track::computeWeights() {
     }
 }
 
-void Track::predict(double dt, double ax, double ay) {
+void Track::predict(double dt, const Eigen::Vector3d& angular_velocity,
+                   const Eigen::Vector3d& linear_acceleration) {
     // Generate sigma points
     Eigen::MatrixXd sigma_points = generateSigmaPoints();
     
-    // Predict sigma points
-    Eigen::MatrixXd predicted_sigma = predictSigmaPoints(sigma_points, dt, ax, ay);
+    // Predict sigma points with IMU compensation
+    Eigen::MatrixXd predicted_sigma = predictSigmaPoints(sigma_points, dt, 
+                                                       angular_velocity, linear_acceleration);
     
     // Compute predicted mean
     state_.setZero();
@@ -105,20 +122,50 @@ Eigen::MatrixXd Track::generateSigmaPoints() {
 }
 
 Eigen::MatrixXd Track::predictSigmaPoints(const Eigen::MatrixXd& sigma_points,
-                                         double dt, double ax, double ay) {
+                                         double dt, const Eigen::Vector3d& omega_imu,
+                                         const Eigen::Vector3d& accel_imu) {
     Eigen::MatrixXd predicted(STATE_DIM, 2 * STATE_DIM + 1);
     
+    // Transform IMU measurements to sensor frame (XY plane only)
+    Eigen::Vector3d omega_sensor = R_imu_to_sensor_ * omega_imu;
+    Eigen::Vector3d accel_sensor = R_imu_to_sensor_ * accel_imu;
+    
+    // Use Z-axis rotation only
+    double omega_z = omega_sensor.z();
+    Eigen::Vector2d accel_xy(accel_sensor.x(), accel_sensor.y());
+    
+    // Compute rotation during dt (2D)
+    double theta = omega_z * dt;
+    double cos_theta = std::cos(theta);
+    double sin_theta = std::sin(theta);
+    Eigen::Matrix2d R_delta;
+    R_delta << cos_theta, -sin_theta,
+               sin_theta, cos_theta;
+    
+    // Inverse rotation (k+1 frame to k frame)
+    Eigen::Matrix2d R_compensation = R_delta.transpose();
+    
     for (int i = 0; i < 2 * STATE_DIM + 1; ++i) {
-        double x = sigma_points(0, i);
-        double y = sigma_points(1, i);
-        double vx = sigma_points(2, i);
-        double vy = sigma_points(3, i);
+        Eigen::Vector2d current_pos(sigma_points(0, i), sigma_points(1, i));
+        Eigen::Vector2d current_vel(sigma_points(2, i), sigma_points(3, i));
         
-        // Motion model
-        predicted(0, i) = x + vx * dt + 0.5 * ax * dt * dt;
-        predicted(1, i) = y + vy * dt + 0.5 * ay * dt * dt;
-        predicted(2, i) = vx + ax * dt;
-        predicted(3, i) = vy + ay * dt;
+        // Predict sensor velocity at k+1
+        Eigen::Vector2d predicted_vel_sensor = current_vel + accel_xy * dt;
+        
+        // Predict cone position at k+1
+        // When sensor moves, cone appears to move in opposite direction
+        Eigen::Vector2d delta_pos_sensor = current_vel * dt + 0.5 * accel_xy * dt * dt;
+        Eigen::Vector2d pos_before_rotation = current_pos - delta_pos_sensor;
+        
+        // Apply rotation compensation
+        Eigen::Vector2d predicted_pos_cone = R_compensation * pos_before_rotation;
+        predicted_vel_sensor = R_compensation * predicted_vel_sensor;
+        
+        // Store predicted state
+        predicted(0, i) = predicted_pos_cone.x();
+        predicted(1, i) = predicted_pos_cone.y();
+        predicted(2, i) = predicted_vel_sensor.x();
+        predicted(3, i) = predicted_vel_sensor.y();
     }
     
     return predicted;
@@ -185,10 +232,26 @@ void Track::updateColorHistory(const std::string& color) {
     std::transform(lowercase_color.begin(), lowercase_color.end(), 
                    lowercase_color.begin(), ::tolower);
     
-    if (lowercase_color != "unknown" && !lowercase_color.empty()) {
-        color_history_.push_back(lowercase_color);
-        if (color_history_.size() > MAX_COLOR_HISTORY) {
-            color_history_.pop_front();
+    // Add to history and update counts
+    color_history_.push_back(lowercase_color);
+    if (color_history_.size() > MAX_COLOR_HISTORY) {
+        std::string old_color = color_history_.front();
+        color_history_.pop_front();
+        if (color_counts_.find(old_color) != color_counts_.end()) {
+            color_counts_[old_color] = std::max(0, color_counts_[old_color] - 1);
+        }
+    }
+    
+    color_counts_[lowercase_color]++;
+    
+    // Check if we should set definite color (matching Python logic)
+    if (definite_color_.empty()) {
+        // Check blue cone, red cone, yellow cone counts
+        for (const auto& cone_color : {"blue cone", "red cone", "yellow cone"}) {
+            if (color_counts_[cone_color] >= COLOR_CONFIDENCE_THRESHOLD) {
+                definite_color_ = cone_color;
+                break;
+            }
         }
     }
 }
@@ -202,28 +265,50 @@ Eigen::Vector2d Track::getVelocity() const {
 }
 
 std::string Track::getColor() const {
-    if (color_history_.empty()) {
-        return "unknown";
+    // If definite color is set, return it (matching Python logic)
+    if (!definite_color_.empty()) {
+        // Capitalize first letter of each word to match Python output
+        std::string result = definite_color_;
+        result[0] = std::toupper(result[0]);
+        size_t pos = result.find(' ');
+        if (pos != std::string::npos && pos + 1 < result.length()) {
+            result[pos + 1] = std::toupper(result[pos + 1]);
+        }
+        return result;
     }
     
-    // Count occurrences of each color
-    std::unordered_map<std::string, int> color_count;
-    for (const auto& color : color_history_) {
-        color_count[color]++;
-    }
-    
-    // Find most common color (excluding "unknown")
+    // Otherwise find best color from counts
     std::string best_color = "unknown";
     int max_count = 0;
-    for (const auto& [color, count] : color_count) {
+    
+    for (const auto& [color, count] : color_counts_) {
         if (color != "unknown" && count > max_count) {
             max_count = count;
             best_color = color;
         }
     }
     
-    // Return lowercase color to match visualization color map
-    return best_color;
+    // Capitalize to match Python output format
+    if (best_color != "unknown") {
+        best_color[0] = std::toupper(best_color[0]);
+        size_t pos = best_color.find(' ');
+        if (pos != std::string::npos && pos + 1 < best_color.length()) {
+            best_color[pos + 1] = std::toupper(best_color[pos + 1]);
+        }
+        return best_color;
+    }
+    
+    return "Unknown";  // Capitalized to match Python
+}
+
+void Track::setMeasurementNoise(double r_measurement) {
+    R_ = Eigen::Matrix2d::Identity() * r_measurement;
+}
+
+void Track::setProcessNoise(double q_pos, double q_vel) {
+    Q_ = Eigen::Matrix4d::Identity();
+    Q_.block<2, 2>(0, 0) *= q_pos;  // Position process noise
+    Q_.block<2, 2>(2, 2) *= q_vel;  // Velocity process noise
 }
 
 } // namespace tracking

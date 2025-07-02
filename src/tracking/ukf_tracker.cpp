@@ -66,17 +66,23 @@ void UKFTracker::reset() {
 }
 
 void UKFTracker::predict(double dt, const utils::IMUData* imu_data) {
-    double ax = 0.0, ay = 0.0;
+    Eigen::Vector3d angular_velocity = Eigen::Vector3d::Zero();
+    Eigen::Vector3d linear_acceleration = Eigen::Vector3d::Zero();
     
     if (imu_data) {
-        // Use IMU acceleration if available
-        ax = imu_data->linear_accel_x;
-        ay = imu_data->linear_accel_y;
+        // Use IMU data if available
+        angular_velocity << imu_data->angular_vel_x,
+                           imu_data->angular_vel_y,
+                           imu_data->angular_vel_z;
+        
+        linear_acceleration << imu_data->linear_accel_x,
+                              imu_data->linear_accel_y,
+                              imu_data->linear_accel_z;
     }
     
-    // Predict all tracks
+    // Predict all tracks with IMU compensation
     for (auto& [id, track] : tracks_) {
-        track->predict(dt, ax, ay);
+        track->predict(dt, angular_velocity, linear_acceleration);
     }
 }
 
@@ -104,9 +110,19 @@ fusion::MatchResult UKFTracker::associate(const std::vector<utils::Cone>& detect
         return result;
     }
     
-    // Compute cost matrix
+    // Compute cost matrix with gating (matching Python logic)
     auto cost_matrix = fusion::HungarianMatcher::computeCostMatrix(
         detection_positions, track_positions);
+    
+    // Apply threshold gating - set costs above threshold to threshold + 1
+    // This matches Python's approach for better track stability
+    for (int i = 0; i < cost_matrix.rows(); ++i) {
+        for (int j = 0; j < cost_matrix.cols(); ++j) {
+            if (cost_matrix(i, j) > config_.max_association_distance) {
+                cost_matrix(i, j) = config_.max_association_distance + 1.0;
+            }
+        }
+    }
     
     // Perform matching
     auto match_result = matcher_->match(cost_matrix, config_.max_association_distance);
@@ -151,7 +167,12 @@ void UKFTracker::createNewTracks(const std::vector<int>& unmatched_detections,
         if (det_idx < detections.size()) {
             const auto& det = detections[det_idx];
             int new_id = generateTrackId();
-            tracks_[new_id] = std::make_shared<Track>(new_id, det.x, det.y, det.z);
+            // Pass IMU transform and UKF parameters to new track
+            tracks_[new_id] = std::make_shared<Track>(
+                new_id, det.x, det.y, det.z,
+                config_.imu_to_sensor_transform,
+                config_.p_initial_pos, config_.p_initial_vel,
+                config_.r_pos, config_.q_pos, config_.q_vel);
             tracks_[new_id]->update(det.x, det.y, det.z, det.color);
         }
     }
