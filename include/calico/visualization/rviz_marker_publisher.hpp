@@ -5,10 +5,12 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <utility>
 #include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
 #include <rclcpp/time.hpp>
+#include <Eigen/Core>
 #include "calico/utils/message_converter.hpp"
 
 namespace calico {
@@ -71,6 +73,19 @@ public:
      */
     void setShowColorLabels(bool enable) { show_color_labels_ = enable; }
     
+    /**
+     * @brief Update velocity estimates for tracked cones
+     * @param cones Vector of tracked cones
+     * @param current_time Current timestamp in seconds
+     */
+    void updateVelocityEstimates(const std::vector<utils::Cone>& cones, double current_time);
+    
+    /**
+     * @brief Set velocity information for cones based on previous positions
+     * @param cones Vector of tracked cones (will be modified)
+     */
+    void setVelocityForCones(std::vector<utils::Cone>& cones);
+    
 private:
     /**
      * @brief Create a single cone marker
@@ -122,11 +137,32 @@ private:
     std_msgs::msg::ColorRGBA getColor(const std::string& color_name);
     
     /**
-     * @brief Create delete marker to clear old markers
-     * @param num_markers Number of markers to delete
+     * @brief Create delete marker for a specific namespace and ID
+     * @param ns Namespace of the marker
+     * @param id ID of the marker to delete
+     * @return Delete marker
+     */
+    visualization_msgs::msg::Marker createDeleteMarker(const std::string& ns, int id);
+    
+    /**
+     * @brief Create delete all marker
      * @return Delete all marker
      */
     visualization_msgs::msg::Marker createDeleteAllMarker();
+    
+    /**
+     * @brief Create velocity arrow marker
+     * @param cone Cone data with velocity
+     * @param marker_id Unique marker ID
+     * @param frame_id Reference frame
+     * @param timestamp Marker timestamp
+     * @return Arrow marker
+     */
+    visualization_msgs::msg::Marker createVelocityArrowMarker(
+        const utils::Cone& cone,
+        int marker_id,
+        const std::string& frame_id,
+        const rclcpp::Time& timestamp);
     
 private:
     // Cone parameters
@@ -140,8 +176,14 @@ private:
     // Color mappings
     std::unordered_map<std::string, ConeColor> color_map_;
     
-    // Marker tracking
-    int last_marker_count_;
+    // Marker tracking (Python-style counters)
+    int previous_cone_count_;      // _previous_marker_count in Python
+    int previous_velocity_count_;  // _previous_velocity_marker_count in Python  
+    int previous_text_count_;      // _previous_text_marker_count in Python
+    
+    // Velocity estimation
+    std::unordered_map<int, std::pair<double, Eigen::Vector3d>> previous_positions_;  // track_id -> (timestamp, position)
+    std::unordered_map<int, Eigen::Vector3d> velocity_estimates_;  // track_id -> velocity
 };
 
 } // namespace visualization

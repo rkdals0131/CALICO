@@ -11,6 +11,7 @@
 #include <yolo_msgs/msg/detection_array.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <geometry_msgs/msg/quaternion.hpp>
+#include <Eigen/Core>
 
 namespace calico {
 namespace utils {
@@ -23,6 +24,10 @@ struct Cone {
     std::string color;
     int id = -1;
     double confidence = 1.0;
+    
+    // Velocity information (optional)
+    bool has_velocity = false;
+    Eigen::Vector3d velocity = Eigen::Vector3d::Zero();
 };
 
 /**
