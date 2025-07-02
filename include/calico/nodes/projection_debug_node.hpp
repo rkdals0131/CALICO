@@ -34,7 +34,9 @@ private:
     std::string camera_id_;
     cv::Mat camera_matrix_;
     cv::Mat dist_coeffs_;
-    Eigen::Matrix4d extrinsic_matrix_;
+    Eigen::Matrix4d extrinsic_matrix_;  // T_lidar_to_cam
+    Eigen::Matrix4d T_sensor_to_lidar_;  // Sensor to LiDAR transform (from Ouster)
+    Eigen::Matrix4d T_sensor_to_cam_;    // Combined transform for cone data
     
     // Data storage
     std::vector<utils::Cone> latest_cones_;

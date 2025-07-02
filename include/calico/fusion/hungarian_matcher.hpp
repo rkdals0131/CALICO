@@ -4,6 +4,7 @@
 #include <vector>
 #include <utility>
 #include <Eigen/Core>
+#include <ortools/graph/assignment.h>
 
 namespace calico {
 namespace fusion {

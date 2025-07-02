@@ -52,57 +52,38 @@ Eigen::MatrixXd HungarianMatcher::computeCostMatrix(
 }
 
 std::vector<int> HungarianMatcher::solveHungarian(const Eigen::MatrixXd& cost_matrix) {
-    // This is a simplified implementation of the Hungarian algorithm
-    // For production, consider using dlib::max_cost_assignment or munkres-cpp
-    
+    // Use Google OR-Tools for optimal assignment
     int n_rows = cost_matrix.rows();
     int n_cols = cost_matrix.cols();
-    int dim = std::max(n_rows, n_cols);
     
-    // Create square cost matrix by padding with large values
-    Eigen::MatrixXd square_cost(dim, dim);
-    square_cost.fill(std::numeric_limits<double>::max() / 2);
-    square_cost.block(0, 0, n_rows, n_cols) = cost_matrix;
+    // Create the assignment solver
+    operations_research::SimpleLinearSumAssignment assignment;
     
-    // Implement Hungarian algorithm steps
-    // Step 1: Subtract row minimum from each row
-    Eigen::MatrixXd working_matrix = square_cost;
-    for (int i = 0; i < dim; ++i) {
-        double row_min = working_matrix.row(i).minCoeff();
-        if (row_min < std::numeric_limits<double>::max() / 2) {
-            working_matrix.row(i).array() -= row_min;
-        }
-    }
+    // Scale costs to integers (OR-Tools works with integer costs)
+    const int64_t scale_factor = 1000000; // Scale to preserve 6 decimal places
     
-    // Step 2: Subtract column minimum from each column
-    for (int j = 0; j < dim; ++j) {
-        double col_min = working_matrix.col(j).minCoeff();
-        if (col_min < std::numeric_limits<double>::max() / 2) {
-            working_matrix.col(j).array() -= col_min;
-        }
-    }
-    
-    // Simplified assignment (greedy approach for now)
-    // TODO: Implement full Hungarian algorithm or integrate external library
-    std::vector<int> assignments(n_rows, -1);
-    std::vector<bool> col_used(n_cols, false);
-    
-    // Find minimum in each row
+    // Add arcs with costs
     for (int i = 0; i < n_rows; ++i) {
-        double min_val = std::numeric_limits<double>::max();
-        int min_col = -1;
-        
         for (int j = 0; j < n_cols; ++j) {
-            if (!col_used[j] && working_matrix(i, j) < min_val) {
-                min_val = working_matrix(i, j);
-                min_col = j;
-            }
+            // Scale and convert to integer
+            int64_t cost = static_cast<int64_t>(cost_matrix(i, j) * scale_factor);
+            assignment.AddArcWithCost(i, j, cost);
         }
-        
-        if (min_col >= 0) {
-            assignments[i] = min_col;
-            col_used[min_col] = true;
+    }
+    
+    // Solve the assignment problem
+    operations_research::SimpleLinearSumAssignment::Status status = assignment.Solve();
+    
+    std::vector<int> assignments(n_rows, -1);
+    
+    if (status == operations_research::SimpleLinearSumAssignment::OPTIMAL) {
+        // Extract assignments
+        for (int i = 0; i < n_rows; ++i) {
+            assignments[i] = assignment.RightMate(i);
         }
+    } else {
+        RCLCPP_WARN(rclcpp::get_logger("hungarian_matcher"), 
+                    "Hungarian algorithm did not find optimal solution");
     }
     
     return assignments;

@@ -28,6 +28,8 @@ find_package(yaml-cpp REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
+find_package(kalman_filters REQUIRED)
+# OR-Tools is used directly without find_package due to protobuf issues
 
 # Custom messages
 find_package(custom_interface REQUIRED)
@@ -39,6 +41,8 @@ include_directories(
   ${EIGEN3_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${YAML_CPP_INCLUDE_DIRS}
+  ${kalman_filters_INCLUDE_DIRS}
+  /usr/local/include
 )
 
 # Link directories
@@ -82,6 +86,7 @@ add_library(calico_fusion SHARED
 target_link_libraries(calico_fusion
   calico_utils
   ${OpenCV_LIBS}
+  ortools
 )
 ament_target_dependencies(calico_fusion ${dependencies})
 
@@ -94,6 +99,7 @@ add_library(calico_tracking SHARED
 target_link_libraries(calico_tracking
   calico_utils
   calico_fusion
+  ${kalman_filters_LIBRARIES}
 )
 ament_target_dependencies(calico_tracking ${dependencies})
 

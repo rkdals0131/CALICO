@@ -12,6 +12,13 @@ ProjectionDebugNode::ProjectionDebugNode()
       text_color_(0, 255, 255),  // Yellow in BGR
       sync_tolerance_(0.1) {  // 100ms sync tolerance
     
+    // Initialize T_sensor_to_lidar from Ouster OS1 documentation
+    // This transforms from os_sensor frame to os_lidar frame
+    T_sensor_to_lidar_ << -1,  0,  0,  0,
+                           0, -1,  0,  0,
+                           0,  0,  1, -0.038195,
+                           0,  0,  0,  1;
+    
     // Declare parameters
     this->declare_parameter("config_file", "");
     this->declare_parameter("camera_id", "camera_1");
@@ -33,17 +40,18 @@ ProjectionDebugNode::ProjectionDebugNode()
         std::bind(&ProjectionDebugNode::lidarCallback, this, std::placeholders::_1));
     
     image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-        "/" + camera_id_ + "/image_raw", 10,
+        "/" + camera_id_ + "/dbg_image", 10,
         std::bind(&ProjectionDebugNode::imageCallback, this, std::placeholders::_1));
     
-    // Create publisher
+    // Create publisher with camera-specific topic
+    std::string debug_topic = "/debug/" + camera_id_ + "/projection_overlay";
     debug_image_pub_ = this->create_publisher<sensor_msgs::msg::Image>(
-        "/debug/projection_overlay", 10);
+        debug_topic, 10);
     
     RCLCPP_INFO(this->get_logger(), 
                 "Projection debug node initialized for camera: %s", camera_id_.c_str());
     RCLCPP_INFO(this->get_logger(), 
-                "Publishing debug images to: /debug/projection_overlay");
+                "Publishing debug images to: %s", debug_topic.c_str());
 }
 
 void ProjectionDebugNode::loadCameraConfig() {
@@ -75,6 +83,12 @@ void ProjectionDebugNode::loadCameraConfig() {
     }
     
     RCLCPP_INFO(this->get_logger(), "Loaded configuration for camera: %s", camera_id_.c_str());
+    
+    // Compute T_sensor_to_cam = T_lidar_to_cam * T_sensor_to_lidar
+    // This is used for cone data which is in os_sensor frame
+    T_sensor_to_cam_ = extrinsic_matrix_ * T_sensor_to_lidar_;
+    
+    RCLCPP_INFO(this->get_logger(), "Computed T_sensor_to_cam for cone projection");
 }
 
 void ProjectionDebugNode::lidarCallback(
@@ -129,56 +143,62 @@ void ProjectionDebugNode::processAndPublish() {
     // Create debug image
     cv::Mat debug_image = latest_image_.clone();
     
-    // Convert cones to 3D points
-    std::vector<utils::Point3D> lidar_points;
-    for (const auto& cone : latest_cones_) {
-        lidar_points.emplace_back(cone.x, cone.y, cone.z);
-    }
-    
-    // Project points to image
-    auto projected_points = utils::ProjectionUtils::projectLidarToCamera(
-        lidar_points,
-        camera_matrix_,
-        dist_coeffs_,
-        extrinsic_matrix_
-    );
-    
-    // Draw projected points
+    // Project each cone individually to maintain index correspondence
+    std::vector<cv::Point2f> valid_projections_list;
     int valid_projections = 0;
-    for (size_t i = 0; i < projected_points.size(); ++i) {
-        const auto& pt = projected_points[i];
+    
+    for (size_t i = 0; i < latest_cones_.size(); ++i) {
+        const auto& cone = latest_cones_[i];
         
-        // Check if point is within image bounds
-        if (pt.x >= 0 && pt.x < debug_image.cols && 
-            pt.y >= 0 && pt.y < debug_image.rows) {
+        // Transform cone from sensor frame to camera frame
+        Eigen::Vector4d cone_sensor(cone.x, cone.y, cone.z, 1.0);
+        Eigen::Vector4d cone_cam = T_sensor_to_cam_ * cone_sensor;
+        
+        // Check if cone is in front of camera
+        if (cone_cam(2) > 1e-3) {  // 1mm minimum distance
+            // Convert to OpenCV point
+            cv::Point3f cv_point(cone_cam(0), cone_cam(1), cone_cam(2));
+            std::vector<cv::Point3f> single_point = {cv_point};
+            std::vector<cv::Point2f> projected;
             
-            // Draw circle at projected point
-            cv::circle(debug_image, cv::Point(pt.x, pt.y), 
-                      circle_radius_, point_color_, -1);
+            // Project to image plane
+            cv::projectPoints(single_point, cv::Vec3d(0, 0, 0), cv::Vec3d(0, 0, 0),
+                            camera_matrix_, dist_coeffs_, projected);
             
-            // Draw cone info
-            if (i < latest_cones_.size()) {
-                std::string info = std::to_string(i) + ": " + latest_cones_[i].color;
-                cv::putText(debug_image, info, 
-                           cv::Point(pt.x + 10, pt.y - 10),
-                           cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color_, 1);
+            if (!projected.empty()) {
+                const auto& pt = projected[0];
+                
+                // Check if point is within image bounds
+                if (pt.x >= 0 && pt.x < debug_image.cols && 
+                    pt.y >= 0 && pt.y < debug_image.rows) {
+                    
+                    // Draw circle at projected point
+                    cv::circle(debug_image, cv::Point(pt.x, pt.y), 
+                              circle_radius_, point_color_, -1);
+                    
+                    // Draw cone info with correct index and color
+                    std::string info = std::to_string(i) + ": " + cone.color;
+                    cv::putText(debug_image, info, 
+                               cv::Point(pt.x + 10, pt.y - 10),
+                               cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color_, 1);
+                    
+                    valid_projections++;
+                    valid_projections_list.push_back(pt);
+                }
             }
-            
-            valid_projections++;
         }
     }
     
     // Add debug info to image
     std::string debug_text = "LiDAR: " + std::to_string(latest_cones_.size()) + 
-                            " cones, Projected: " + std::to_string(projected_points.size()) +
-                            ", Valid: " + std::to_string(valid_projections);
+                            " cones, Valid: " + std::to_string(valid_projections);
     cv::putText(debug_image, debug_text, cv::Point(10, 30),
                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(255, 255, 255), 2);
     
     // Log detailed projection info
     RCLCPP_INFO(this->get_logger(), 
-                "Projection debug: %zu cones -> %zu projected -> %d valid (in image bounds)",
-                latest_cones_.size(), projected_points.size(), valid_projections);
+                "Projection debug: %zu cones -> %d valid projections (in front of camera and in image bounds)",
+                latest_cones_.size(), valid_projections);
     
     // Convert back to ROS message and publish
     cv_bridge::CvImage cv_msg;
