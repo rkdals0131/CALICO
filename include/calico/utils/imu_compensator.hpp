@@ -1,5 +1,5 @@
-#ifndef CALICO_TRACKING_IMU_COMPENSATOR_HPP
-#define CALICO_TRACKING_IMU_COMPENSATOR_HPP
+#ifndef CALICO_UTILS_IMU_COMPENSATOR_HPP
+#define CALICO_UTILS_IMU_COMPENSATOR_HPP
 
 #include <deque>
 #include <memory>
@@ -8,7 +8,7 @@
 #include "calico/utils/message_converter.hpp"
 
 namespace calico {
-namespace tracking {
+namespace utils {
 
 /**
  * @brief IMU filter type enumeration
@@ -137,7 +137,7 @@ private:
     bool first_measurement_;
 };
 
-} // namespace tracking
+} // namespace utils
 } // namespace calico
 
-#endif // CALICO_TRACKING_IMU_COMPENSATOR_HPP
+#endif // CALICO_UTILS_IMU_COMPENSATOR_HPP

@@ -1,9 +1,9 @@
-#include "calico/tracking/imu_compensator.hpp"
+#include "calico/utils/imu_compensator.hpp"
 #include <cmath>
 #include <rclcpp/rclcpp.hpp>
 
 namespace calico {
-namespace tracking {
+namespace utils {
 
 IMUCompensator::IMUCompensator(const IMUCompensatorConfig& config)
     : config_(config),
@@ -186,5 +186,5 @@ void IMUCompensator::initializeButterworthCoefficients() {
     butterworth_a_.push_back((1 - sqrt2 * a + a2) / (1 + sqrt2 * a + a2));
 }
 
-} // namespace tracking
+} // namespace utils
 } // namespace calico
