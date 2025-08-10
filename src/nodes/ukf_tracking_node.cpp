@@ -4,6 +4,7 @@
 #include <sensor_msgs/msg/imu.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/sync_policies/approximate_time.h>
+#include <atomic>
 #include <kalman_filters/tracking/multi_tracker.hpp>
 #include "calico/utils/imu_compensator.hpp"
 #include "calico/utils/message_converter.hpp"
@@ -298,8 +299,8 @@ private:
         tracked_cones_pub_->publish(output_msg);
         
         // Log statistics
-        static int update_count = 0;
-        if (++update_count % 100 == 0) {
+        static std::atomic<int> update_count{0};
+        if (update_count.fetch_add(1) % 100 == 0) {
             RCLCPP_INFO(this->get_logger(), 
                        "Tracking %zu cones, %zu active tracks",
                        tracked_cones.size(), tracker_->getNumTracks());

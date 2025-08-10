@@ -2,6 +2,7 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
+#include <atomic>
 #include <custom_interface/msg/modified_float32_multi_array.hpp>
 #include <yolo_msgs/msg/detection_array.hpp>
 #include <sensor_msgs/msg/imu.hpp>
@@ -143,8 +144,9 @@ private:
         fused_cones_pub_->publish(output_msg);
         
         // Log statistics periodically
-        static int fusion_count = 0;
-        if (++fusion_count % 100 == 0) {
+        static std::atomic<int> fusion_count{0};
+        int current_count = fusion_count.fetch_add(1) + 1;
+        if (current_count % 100 == 0) {
             int matched_cones = 0;
             for (const auto& cone : fused_cones) {
                 if (cone.color != "Unknown") {
@@ -154,7 +156,7 @@ private:
             
             RCLCPP_INFO(this->get_logger(), 
                        "Fusion cycle %d: %d/%zu cones matched with YOLO", 
-                       fusion_count, matched_cones, fused_cones.size());
+                       current_count, matched_cones, fused_cones.size());
             
             // Log per-camera results
             auto& cam_results = fusion_->getCameraResults();
