@@ -1,5 +1,4 @@
 #include <rclcpp/rclcpp.hpp>
-#include <custom_interface/msg/modified_float32_multi_array.hpp>
 #include <custom_interface/msg/tracked_cone_array.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <message_filters/subscriber.h>
@@ -13,7 +12,7 @@ namespace calico {
 
 class UKFTrackingNode : public rclcpp::Node {
     using SyncPolicy = message_filters::sync_policies::ApproximateTime<
-        custom_interface::msg::ModifiedFloat32MultiArray,
+        custom_interface::msg::TrackedConeArray,
         sensor_msgs::msg::Imu>;
     using Synchronizer = message_filters::Synchronizer<SyncPolicy>;
 
@@ -102,7 +101,7 @@ public:
         
         // Create subscribers for time synchronization
         if (use_imu_) {
-            cones_sub_.subscribe(this, "/fused_sorted_cones", qos.get_rmw_qos_profile());
+            cones_sub_.subscribe(this, "/fused_sorted_cones_v2", qos.get_rmw_qos_profile());
             imu_sub_.subscribe(this, "/ouster/imu", qos.get_rmw_qos_profile());
             
             // Create synchronizer
@@ -116,8 +115,8 @@ public:
                          std::placeholders::_1, std::placeholders::_2));
         } else {
             // Without IMU, use simple subscription
-            cones_only_sub_ = this->create_subscription<custom_interface::msg::ModifiedFloat32MultiArray>(
-                "/fused_sorted_cones", qos,
+            cones_only_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
+                "/fused_sorted_cones_v2", qos,
                 std::bind(&UKFTrackingNode::conesOnlyCallback, this, std::placeholders::_1));
         }
         
@@ -226,11 +225,11 @@ private:
     // Removed updateConfigField and updateExistingTracks functions as they're no longer needed
     
     void synchronizedCallback(
-        const custom_interface::msg::ModifiedFloat32MultiArray::ConstSharedPtr cone_msg,
+        const custom_interface::msg::TrackedConeArray::ConstSharedPtr cone_msg,
         const sensor_msgs::msg::Imu::ConstSharedPtr imu_msg) {
         
         // Convert cone message to internal representation
-        auto cones = utils::MessageConverter::fromModifiedFloat32MultiArray(*cone_msg);
+        auto cones = utils::MessageConverter::fromTrackedConeArray(*cone_msg);
         
         // Convert to kalman_filters Detection format
         auto detections = utils::MessageConverter::conesToDetections(cones);
@@ -268,9 +267,9 @@ private:
         publishTrackedCones(cone_msg->header);
     }
     
-    void conesOnlyCallback(const custom_interface::msg::ModifiedFloat32MultiArray::SharedPtr msg) {
+    void conesOnlyCallback(const custom_interface::msg::TrackedConeArray::SharedPtr msg) {
         // Convert message to internal representation
-        auto cones = utils::MessageConverter::fromModifiedFloat32MultiArray(*msg);
+        auto cones = utils::MessageConverter::fromTrackedConeArray(*msg);
         
         // Convert to kalman_filters Detection format
         auto detections = utils::MessageConverter::conesToDetections(cones);
@@ -313,12 +312,12 @@ private:
     std::unique_ptr<utils::IMUCompensator> imu_compensator_;
     
     // Synchronized subscribers
-    message_filters::Subscriber<custom_interface::msg::ModifiedFloat32MultiArray> cones_sub_;
+    message_filters::Subscriber<custom_interface::msg::TrackedConeArray> cones_sub_;
     message_filters::Subscriber<sensor_msgs::msg::Imu> imu_sub_;
     std::shared_ptr<Synchronizer> sync_;
     
     // Simple subscriber (when IMU not used)
-    rclcpp::Subscription<custom_interface::msg::ModifiedFloat32MultiArray>::SharedPtr cones_only_sub_;
+    rclcpp::Subscription<custom_interface::msg::TrackedConeArray>::SharedPtr cones_only_sub_;
     
     // Publisher
     rclcpp::Publisher<custom_interface::msg::TrackedConeArray>::SharedPtr tracked_cones_pub_;

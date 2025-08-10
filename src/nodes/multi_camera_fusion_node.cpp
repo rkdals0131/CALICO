@@ -3,7 +3,7 @@
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
 #include <atomic>
-#include <custom_interface/msg/modified_float32_multi_array.hpp>
+#include <custom_interface/msg/tracked_cone_array.hpp>
 #include <yolo_msgs/msg/detection_array.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include "calico/utils/config_loader.hpp"
@@ -47,7 +47,7 @@ public:
         qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
         
         // Create publisher
-        fused_cones_pub_ = this->create_publisher<custom_interface::msg::ModifiedFloat32MultiArray>(
+        fused_cones_pub_ = this->create_publisher<custom_interface::msg::TrackedConeArray>(
             config_.output_topic, qos);
         
         // Setup message filters for time synchronization
@@ -65,7 +65,7 @@ private:
         qos_profile.depth = config_.history_depth;
         
         // Create cone subscriber
-        cones_sub_filter_ = std::make_shared<message_filters::Subscriber<custom_interface::msg::ModifiedFloat32MultiArray>>(
+        cones_sub_filter_ = std::make_shared<message_filters::Subscriber<custom_interface::msg::TrackedConeArray>>(
             this, config_.cones_topic, qos_profile);
         
         // Create detection subscribers for each camera
@@ -82,7 +82,7 @@ private:
         if (config_.cameras.size() == 2) {
             // 2 cameras + 1 cone topic
             typedef message_filters::sync_policies::ApproximateTime<
-                custom_interface::msg::ModifiedFloat32MultiArray,
+                custom_interface::msg::TrackedConeArray,
                 yolo_msgs::msg::DetectionArray,
                 yolo_msgs::msg::DetectionArray> SyncPolicy2;
             
@@ -105,7 +105,7 @@ private:
         }
     }
     
-    void syncCallback2(const custom_interface::msg::ModifiedFloat32MultiArray::ConstSharedPtr& cone_msg,
+    void syncCallback2(const custom_interface::msg::TrackedConeArray::ConstSharedPtr& cone_msg,
                       const yolo_msgs::msg::DetectionArray::ConstSharedPtr& det1_msg,
                       const yolo_msgs::msg::DetectionArray::ConstSharedPtr& det2_msg) {
         RCLCPP_DEBUG(this->get_logger(), "Synchronized callback triggered");
@@ -118,10 +118,10 @@ private:
         performFusion(cone_msg, camera_detections);
     }
     
-    void performFusion(const custom_interface::msg::ModifiedFloat32MultiArray::ConstSharedPtr& cone_msg,
+    void performFusion(const custom_interface::msg::TrackedConeArray::ConstSharedPtr& cone_msg,
                       const std::unordered_map<std::string, yolo_msgs::msg::DetectionArray::ConstSharedPtr>& camera_detections) {
         // Convert messages to internal representation
-        auto cones = utils::MessageConverter::fromModifiedFloat32MultiArray(*cone_msg);
+        auto cones = utils::MessageConverter::fromTrackedConeArray(*cone_msg);
         
         // Convert YOLO detections for each camera
         std::unordered_map<std::string, std::vector<utils::Detection>> detections_internal;
@@ -137,7 +137,7 @@ private:
         auto fused_cones = fusion_->fuse(cones, detections_internal);
         
         // Convert result back to ROS message
-        auto output_msg = utils::MessageConverter::toModifiedFloat32MultiArray(fused_cones);
+        auto output_msg = utils::MessageConverter::toTrackedConeArray(fused_cones);
         output_msg.header = cone_msg->header;  // Preserve original header
         
         // Publish result
@@ -180,15 +180,15 @@ private:
     std::unique_ptr<fusion::MultiCameraFusion> fusion_;
     
     // Publishers
-    rclcpp::Publisher<custom_interface::msg::ModifiedFloat32MultiArray>::SharedPtr fused_cones_pub_;
+    rclcpp::Publisher<custom_interface::msg::TrackedConeArray>::SharedPtr fused_cones_pub_;
     
     // Message filters for synchronization
-    std::shared_ptr<message_filters::Subscriber<custom_interface::msg::ModifiedFloat32MultiArray>> cones_sub_filter_;
+    std::shared_ptr<message_filters::Subscriber<custom_interface::msg::TrackedConeArray>> cones_sub_filter_;
     std::vector<std::shared_ptr<message_filters::Subscriber<yolo_msgs::msg::DetectionArray>>> detection_sub_filters_;
     
     // Synchronizers (only one will be used based on camera count)
     typedef message_filters::sync_policies::ApproximateTime<
-        custom_interface::msg::ModifiedFloat32MultiArray,
+        custom_interface::msg::TrackedConeArray,
         yolo_msgs::msg::DetectionArray,
         yolo_msgs::msg::DetectionArray> SyncPolicy2;
     std::shared_ptr<message_filters::Synchronizer<SyncPolicy2>> sync_2_;
