@@ -8,9 +8,9 @@ camera_calibration:
 # Topic names
 topics:
   lidar_boxes: "/cone/lidar/box"
-  yolo_detections: "/detections"
-  camera_image: "/usb_cam/image_raw"
-  fused_output: "/fused_cones"
+  yolo_detections: "/camera_1/detections"
+  camera_image: "/usb_cam_1/image_raw"
+  fused_output: "/cone/fused/box"
   debug_overlay: "/debug/iou_fusion_overlay"
 
 # Matching parameters
