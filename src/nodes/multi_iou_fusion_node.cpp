@@ -386,7 +386,7 @@ private:
                                  cv::Vec3d::zeros(), cv::Vec3d::zeros(),
                                  cam_cfg.camera_matrix, cam_cfg.dist_coeffs,
                                  std::vector<cv::Point2d>{pt2d});
-                projected.push_back(cv::Point2f(pt2d[0]));
+                projected.push_back(cv::Point2f(pt2d.x, pt2d.y));
             }
         }
         
@@ -545,3 +545,16 @@ private:
 } // namespace calico
 
 RCLCPP_COMPONENTS_REGISTER_NODE(calico::nodes::MultiIoUFusionNode)
+int main(int argc, char** argv)
+{
+    rclcpp::init(argc, argv);
+    
+    auto node = std::make_shared<calico::nodes::MultiIoUFusionNode>();
+    
+    RCLCPP_INFO(node->get_logger(), "Multi-Camera IoU Fusion Node started");
+    
+    rclcpp::spin(node);
+    rclcpp::shutdown();
+    
+    return 0;
+}

@@ -24,6 +24,7 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
+find_package(image_geometry REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(Eigen3 REQUIRED)
@@ -60,6 +61,7 @@ set(dependencies
   tf2_ros
   tf2_geometry_msgs
   cv_bridge
+  image_geometry
   image_transport
   custom_interface
   yolo_msgs
