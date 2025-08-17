@@ -128,9 +128,24 @@ private:
             auto calib_config = ha_config["calibration"];
             std::string config_folder = calib_config["config_folder"].as<std::string>();
             
+            // Handle relative paths - make them relative to config file directory
+            if (config_folder == "./" || config_folder[0] != '/') {
+                // Get directory of config file
+                size_t last_slash = config_file.find_last_of("/");
+                std::string config_dir = config_file.substr(0, last_slash + 1);
+                
+                if (config_folder == "./") {
+                    config_folder = config_dir;
+                } else {
+                    config_folder = config_dir + config_folder;
+                }
+            }
+            
             // Load intrinsic and extrinsic calibration files
             std::string intrinsic_file = config_folder + calib_config["camera_intrinsic_calibration"].as<std::string>();
             std::string extrinsic_file = config_folder + calib_config["camera_extrinsic_calibration"].as<std::string>();
+            
+            RCLCPP_INFO(this->get_logger(), "Loading calibration from: %s", config_folder.c_str());
             
             YAML::Node intrinsic_config = YAML::LoadFile(intrinsic_file);
             YAML::Node extrinsic_config = YAML::LoadFile(extrinsic_file);

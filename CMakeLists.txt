@@ -182,8 +182,8 @@ install(DIRECTORY launch/
 
 # Install config files from hungarian_association package
 # Users can symlink or copy their config files
-install(DIRECTORY
-  DESTINATION share/${PROJECT_NAME}/config
+install(DIRECTORY config/
+  DESTINATION share/${PROJECT_NAME}
 )
 
 # Export dependencies

@@ -12,12 +12,12 @@ def generate_launch_description():
     
     # Get package directories
     calico_dir = get_package_share_directory('calico')
-    hungarian_dir = get_package_share_directory('hungarian_association')
+    # hungarian_dir = get_package_share_directory('hungarian_association')
     
     # Declare launch arguments
     config_file_arg = DeclareLaunchArgument(
         'config_file',
-        default_value=os.path.join(hungarian_dir, 'config', 'multi_hungarian_config.yaml'),
+        default_value=os.path.join(calico_dir, 'multi_hungarian_config.yaml'),
         description='Path to multi-camera configuration file'
     )
     
