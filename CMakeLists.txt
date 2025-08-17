@@ -34,6 +34,7 @@ find_package(kalman_filters REQUIRED)
 # Custom messages
 find_package(custom_interface REQUIRED)
 find_package(yolo_msgs REQUIRED)
+find_package(vision_msgs REQUIRED)
 
 # Include directories
 include_directories(
@@ -62,6 +63,7 @@ set(dependencies
   image_transport
   custom_interface
   yolo_msgs
+  vision_msgs
   kalman_filters
 )
 
@@ -141,6 +143,18 @@ target_link_libraries(projection_debug_node
 )
 ament_target_dependencies(projection_debug_node ${dependencies})
 
+# Add IoU fusion node
+add_executable(iou_fusion_node
+  src/nodes/iou_fusion_node.cpp
+)
+target_link_libraries(iou_fusion_node
+  calico_utils
+  calico_fusion
+  ${YAML_CPP_LIBRARIES}
+  ${OpenCV_LIBS}
+)
+ament_target_dependencies(iou_fusion_node ${dependencies})
+
 # Install targets
 install(TARGETS
   calico_utils
@@ -150,6 +164,7 @@ install(TARGETS
   ukf_tracking_node
   visualization_node
   projection_debug_node
+  iou_fusion_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

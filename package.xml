@@ -30,6 +30,7 @@
   <!-- Custom message dependencies -->
   <build_depend>custom_interface</build_depend>
   <build_depend>yolo_msgs</build_depend>
+  <build_depend>vision_msgs</build_depend>
 
   <!-- Execution dependencies -->
   <exec_depend>rclcpp</exec_depend>
@@ -49,6 +50,7 @@
   <exec_depend>libopencv-dev</exec_depend>
   <exec_depend>custom_interface</exec_depend>
   <exec_depend>yolo_msgs</exec_depend>
+  <exec_depend>vision_msgs</exec_depend>
   
   <!-- System library dependencies -->
   <depend>kalman_filters</depend>
