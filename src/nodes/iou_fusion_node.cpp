@@ -143,7 +143,10 @@ std::vector<cv::Point3f> IoUFusionNode::get3DBoundingBoxCorners(
     double dy = bbox.size.y / 2.0;
     double dz = bbox.size.z / 2.0;
 
-    // 8 corners of the bounding box
+    // 8 corners of the AABB (Axis-Aligned Bounding Box)
+    // Note: For traffic cones, we intentionally use AABB and ignore orientation
+    // since cones are rotationally symmetric objects with no directional preference.
+    // This simplifies projection calculations and is appropriate for cone detection.
     corners.emplace_back(cx + dx, cy + dy, cz - dz);  // Front-top-right
     corners.emplace_back(cx + dx, cy - dy, cz - dz);  // Front-bottom-right
     corners.emplace_back(cx - dx, cy - dy, cz - dz);  // Front-bottom-left
