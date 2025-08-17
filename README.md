@@ -144,7 +144,7 @@ ros2 launch calico calico_full.launch.py \
 | 토픽 | 타입 | 주파수 | 설명 |
 |------|------|--------|------|
 | `/fused_sorted_cones` | `custom_interface/ModifiedFloat32MultiArray` | ~19Hz | 색상 라벨된 콘 |
-| `/cones/fused/ukf` | `custom_interface/TrackedConeArray` | ~19Hz | 추적된 콘 (ID 포함) |
+| `/cone/fused/ukf` | `custom_interface/TrackedConeArray` | ~19Hz | 추적된 콘 (ID 포함) |
 | `/visualization_marker_array` | `visualization_msgs/MarkerArray` | ~19Hz | RViz 마커 |
 
 ## ⚙️ 설정 파일
@@ -203,7 +203,7 @@ ros2 run rqt_image_view rqt_image_view
 # 입력/출력 주파수 확인
 ros2 topic hz /sorted_cones_time
 ros2 topic hz /fused_sorted_cones
-ros2 topic hz /cones/fused/ukf
+ros2 topic hz /cone/fused/ukf
 
 # 메시지 동기화 확인
 ros2 topic echo /fused_sorted_cones --once

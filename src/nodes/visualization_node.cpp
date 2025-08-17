@@ -41,7 +41,7 @@ public:
         
         // Create subscriber
         tracked_cones_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
-            "/cones/fused/ukf", qos,
+            "/cone/fused/ukf", qos,
             std::bind(&VisualizationNode::trackedConesCallback, this, std::placeholders::_1));
         
         // Create publishers with organized topic names

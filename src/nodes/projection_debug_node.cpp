@@ -36,7 +36,7 @@ ProjectionDebugNode::ProjectionDebugNode()
     
     // Create subscribers
     lidar_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
-        "/cones/lidar", 10,
+        "/cone/lidar", 10,
         std::bind(&ProjectionDebugNode::lidarCallback, this, std::placeholders::_1));
     
     image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
