@@ -189,8 +189,42 @@ private:
     {
         // Load intrinsic parameters
         auto cam_intrinsic = intrinsic[cfg.id];
-        auto K = cam_intrinsic["camera_matrix"]["data"].as<std::vector<double>>();
-        auto D = cam_intrinsic["distortion_coefficients"]["data"].as<std::vector<double>>();
+        
+        // Handle nested array format for camera matrix
+        auto K_nested = cam_intrinsic["camera_matrix"]["data"];
+        std::vector<double> K;
+        if (K_nested.IsSequence() && K_nested.size() > 0) {
+            // Check if it's a nested array (2D format)
+            if (K_nested[0].IsSequence()) {
+                // Flatten the 2D array
+                for (const auto& row : K_nested) {
+                    for (const auto& val : row) {
+                        K.push_back(val.as<double>());
+                    }
+                }
+            } else {
+                // Already flat array
+                K = K_nested.as<std::vector<double>>();
+            }
+        }
+        
+        // Handle distortion coefficients
+        auto D_node = cam_intrinsic["distortion_coefficients"]["data"];
+        std::vector<double> D;
+        if (D_node.IsSequence() && D_node.size() > 0) {
+            // Check if it's a nested array
+            if (D_node[0].IsSequence()) {
+                // Flatten the 2D array
+                for (const auto& row : D_node) {
+                    for (const auto& val : row) {
+                        D.push_back(val.as<double>());
+                    }
+                }
+            } else {
+                // Already flat array
+                D = D_node.as<std::vector<double>>();
+            }
+        }
         
         cfg.camera_matrix = cv::Mat(3, 3, CV_64F);
         for (int i = 0; i < 9; ++i) {
@@ -204,7 +238,23 @@ private:
         
         // Load extrinsic parameters
         auto cam_extrinsic = extrinsic[cfg.id];
-        auto T = cam_extrinsic["extrinsic_matrix"].as<std::vector<double>>();
+        auto T_node = cam_extrinsic["extrinsic_matrix"];
+        std::vector<double> T;
+        
+        if (T_node.IsSequence() && T_node.size() > 0) {
+            // Check if it's a nested array (2D format)
+            if (T_node[0].IsSequence()) {
+                // Flatten the 2D array
+                for (const auto& row : T_node) {
+                    for (const auto& val : row) {
+                        T.push_back(val.as<double>());
+                    }
+                }
+            } else {
+                // Already flat array
+                T = T_node.as<std::vector<double>>();
+            }
+        }
         
         cfg.T_lidar_to_cam = Eigen::Matrix4d::Zero();
         for (int i = 0; i < 4; ++i) {
