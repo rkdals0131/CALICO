@@ -39,14 +39,21 @@ public:
         rclcpp::QoS qos(10);
         qos.reliability(rclcpp::ReliabilityPolicy::BestEffort);
         
-        // Create subscriber
+        // Create subscribers
         tracked_cones_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
             "/cone/fused/ukf", qos,
             std::bind(&VisualizationNode::trackedConesCallback, this, std::placeholders::_1));
         
+        fused_cones_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
+            "/cone/fused", qos,
+            std::bind(&VisualizationNode::fusedConesCallback, this, std::placeholders::_1));
+        
         // Create publishers with organized topic names
         marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
             "/vis/cone/fused/ukf", qos);
+        
+        fused_marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/vis/cone/fused", qos);
         
         arrow_marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
             "/vis/cone/fused/velocity", qos);
@@ -56,6 +63,7 @@ public:
         
         RCLCPP_INFO(this->get_logger(), "Visualization Node initialized successfully");
         RCLCPP_INFO(this->get_logger(), "Publishing fused UKF cones to: /vis/cone/fused/ukf");
+        RCLCPP_INFO(this->get_logger(), "Publishing fused cones to: /vis/cone/fused");
         RCLCPP_INFO(this->get_logger(), "Publishing velocity arrows to: /vis/cone/fused/velocity");
         RCLCPP_INFO(this->get_logger(), "Publishing track ID text to: /vis/cone/fused/text");
         RCLCPP_INFO(this->get_logger(), "Show track IDs: %s", show_track_ids_ ? "yes" : "no");
@@ -120,15 +128,50 @@ private:
         }
     }
     
+    void fusedConesCallback(const custom_interface::msg::TrackedConeArray::SharedPtr msg) {
+        // Convert to internal representation
+        auto cones = utils::MessageConverter::fromTrackedConeArray(*msg);
+        
+        // Use frame_id from message if available, otherwise use parameter
+        std::string frame_id = msg->header.frame_id.empty() ? frame_id_ : msg->header.frame_id;
+        
+        // Create marker array (we'll filter out velocity/text markers)
+        auto marker_array = marker_publisher_->createMarkerArray(
+            cones, frame_id, msg->header.stamp);
+        
+        // Filter out velocity arrows and text markers - only keep cone markers
+        visualization_msgs::msg::MarkerArray simple_markers;
+        for (const auto& marker : marker_array.markers) {
+            if (marker.ns != "velocity_arrows" && marker.ns != "track_id_text") {
+                simple_markers.markers.push_back(marker);
+            }
+        }
+        
+        // Publish simple markers (only cones)
+        if (!simple_markers.markers.empty()) {
+            fused_marker_pub_->publish(simple_markers);
+        }
+        
+        // Log statistics
+        static std::atomic<int> fused_vis_count{0};
+        if (fused_vis_count.fetch_add(1) % 100 == 0) {
+            RCLCPP_DEBUG(this->get_logger(), 
+                        "Visualized %zu fused cones (%d cycles)",
+                        cones.size(), fused_vis_count.load());
+        }
+    }
+    
 private:
     // Marker publisher
     std::unique_ptr<visualization::RVizMarkerPublisher> marker_publisher_;
     
-    // Subscriber
+    // Subscribers
     rclcpp::Subscription<custom_interface::msg::TrackedConeArray>::SharedPtr tracked_cones_sub_;
+    rclcpp::Subscription<custom_interface::msg::TrackedConeArray>::SharedPtr fused_cones_sub_;
     
     // Publishers
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr fused_marker_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr arrow_marker_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr text_marker_pub_;
     

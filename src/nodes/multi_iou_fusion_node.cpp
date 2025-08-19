@@ -8,6 +8,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_components/register_node_macro.hpp>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -15,7 +16,7 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <vision_msgs/msg/bounding_box3_d_array.hpp>
 #include <yolo_msgs/msg/detection_array.hpp>
-#include <custom_interface/msg/modified_float32_multi_array.hpp>
+#include <custom_interface/msg/tracked_cone_array.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <image_geometry/pinhole_camera_model.h>
 #include <opencv2/opencv.hpp>
@@ -23,8 +24,8 @@
 #include <Eigen/Core>
 #include "calico/fusion/hungarian_matcher.hpp"
 #include "calico/utils/config_loader.hpp"
+#include "calico/utils/message_converter.hpp"
 #include <std_msgs/msg/multi_array_dimension.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
 #include <atomic>
 
 namespace calico {
@@ -34,13 +35,13 @@ using BoundingBox3DArray = vision_msgs::msg::BoundingBox3DArray;
 using DetectionArray = yolo_msgs::msg::DetectionArray;
 using Image = sensor_msgs::msg::Image;
 using CameraInfo = sensor_msgs::msg::CameraInfo;
-using ModifiedFloat32MultiArray = custom_interface::msg::ModifiedFloat32MultiArray;
+using TrackedConeArray = custom_interface::msg::TrackedConeArray;
 
 class MultiIoUFusionNode : public rclcpp::Node
 {
 public:
     explicit MultiIoUFusionNode(const rclcpp::NodeOptions& options = rclcpp::NodeOptions())
-        : Node("multi_iou_fusion_node", options)
+        : Node("calico_iou_fusion", options)
     {
         RCLCPP_INFO(this->get_logger(), "Initializing Multi-Camera IoU Fusion Node");
         
@@ -52,8 +53,14 @@ public:
         // Load configuration
         std::string config_file = this->get_parameter("config_file").as_string();
         if (config_file.empty()) {
-            // Use default multi_hungarian_config.yaml
-            config_file = "/home/user1/ROS2_Workspace/ros2_ws/src/hungarian_association/config/multi_hungarian_config.yaml";
+            // Use package-relative default config path
+            try {
+                auto package_share_dir = ament_index_cpp::get_package_share_directory("calico");
+                config_file = package_share_dir + "/config/multi_hungarian_config.yaml";
+            } catch (const std::exception& e) {
+                // Fallback to relative path from executable location
+                config_file = "../share/calico/config/multi_hungarian_config.yaml";
+            }
             RCLCPP_WARN(this->get_logger(), "No config file specified, using default: %s", config_file.c_str());
         }
         
@@ -110,8 +117,7 @@ private:
     double sync_slop_;
     
     // Publishers
-    rclcpp::Publisher<ModifiedFloat32MultiArray>::SharedPtr fused_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<TrackedConeArray>::SharedPtr fused_pub_;
     std::vector<rclcpp::Publisher<Image>::SharedPtr> debug_image_pubs_;
     
     // Subscribers and synchronizers
@@ -199,13 +205,13 @@ private:
                 } else {
                     // Infer from camera ID
                     if (camera_cfg.id == "camera_1") {
-                        camera_cfg.image_topic = "/usb_cam_1/image_raw";
+                        camera_cfg.image_topic = "/camera_1/dbg_image";
                     } else if (camera_cfg.id == "camera_2") {
-                        camera_cfg.image_topic = "/usb_cam_2/image_raw";
+                        camera_cfg.image_topic = "/camera_2/dbg_image";
                     }
                 }
                 
-                camera_cfg.debug_image_topic = "/debug/" + camera_cfg.id + "/iou_overlay";
+                camera_cfg.debug_image_topic = "/" + camera_cfg.id + "/iou_fusion";
                 
                 // Load calibration for this camera
                 loadCameraCalibration(camera_cfg, intrinsic_config, extrinsic_config);
@@ -312,12 +318,8 @@ private:
     void setupPublishers()
     {
         // Main fused output publisher
-        fused_pub_ = this->create_publisher<ModifiedFloat32MultiArray>(
+        fused_pub_ = this->create_publisher<TrackedConeArray>(
             fused_output_topic_, 10);
-        
-        // RViz marker publisher
-        marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "/vis/cone/fused", 10);
         
         // Debug image publishers for each camera
         if (enable_debug_viz_) {
@@ -505,7 +507,7 @@ private:
             // Visualize if enabled
             if (enable_debug_viz_ && !images.empty()) {
                 visualizeMatching3D(images[cam_idx], lidar_boxes, yolo_boxes, 
-                                   match_result, cam_idx, cost_matrix, cam_cfg);
+                                   match_result, cam_idx, cost_matrix, cam_cfg, class_names);
             }
         }
         
@@ -514,9 +516,6 @@ private:
         
         // Publish fused results
         publishFusedResults(lidar_boxes, final_class_names);
-        
-        // Publish RViz markers
-        publishRVizMarkers(lidar_boxes, final_class_names);
     }
     
     cv::Rect2f project3DBoxTo2D(const vision_msgs::msg::BoundingBox3D& box3d, 
@@ -633,31 +632,22 @@ private:
     void publishFusedResults(const BoundingBox3DArray::ConstSharedPtr& lidar_boxes,
                             const std::vector<std::string>& class_names)
     {
-        ModifiedFloat32MultiArray msg;
-        msg.header = lidar_boxes->header;
-        
-        // Pack 3D positions
-        for (const auto& box : lidar_boxes->boxes) {
-            msg.data.push_back(box.center.position.x);
-            msg.data.push_back(box.center.position.y);
-            msg.data.push_back(box.center.position.z);
+        // Convert to internal Cone representation first
+        std::vector<calico::utils::Cone> cones;
+        for (size_t i = 0; i < lidar_boxes->boxes.size(); ++i) {
+            calico::utils::Cone cone;
+            cone.x = lidar_boxes->boxes[i].center.position.x;
+            cone.y = lidar_boxes->boxes[i].center.position.y;
+            cone.z = lidar_boxes->boxes[i].center.position.z;
+            cone.color = class_names[i];
+            cone.id = static_cast<int>(i);  // Use index as track_id for now
+            cone.confidence = 1.0;
+            cones.push_back(cone);
         }
         
-        // Add class names
-        msg.class_names = class_names;
-        
-        // Set layout
-        if (!lidar_boxes->boxes.empty()) {
-            std_msgs::msg::MultiArrayDimension dim1, dim2;
-            dim1.label = "cones";
-            dim1.size = lidar_boxes->boxes.size();
-            dim1.stride = lidar_boxes->boxes.size() * 3;
-            dim2.label = "coords";
-            dim2.size = 3;
-            dim2.stride = 3;
-            msg.layout.dim.push_back(dim1);
-            msg.layout.dim.push_back(dim2);
-        }
+        // Convert to TrackedConeArray using MessageConverter
+        auto msg = calico::utils::MessageConverter::toTrackedConeArray(cones);
+        msg.header = lidar_boxes->header;  // Preserve original header
         
         fused_pub_->publish(msg);
         
@@ -756,7 +746,8 @@ private:
                             const fusion::MatchResult& matches,
                             size_t cam_idx,
                             const Eigen::MatrixXd& cost_matrix,
-                            const CameraConfig& cam_cfg)
+                            const CameraConfig& cam_cfg,
+                            const std::vector<std::string>& class_names)
     {
         if (cam_idx >= debug_image_pubs_.size()) return;
         
@@ -770,15 +761,12 @@ private:
         
         cv::Mat& img = cv_ptr->image;
         
-        // Draw YOLO boxes (blue)
-        for (const auto& box : yolo_boxes) {
-            cv::rectangle(img, box, cv::Scalar(255, 0, 0), 2);
-        }
+        // Note: dbg_image already contains YOLO boxes, so we only draw LiDAR boxes
         
-        // Draw 3D LiDAR boxes (green)
+        // Draw 3D LiDAR boxes (green with thinner lines)
         for (size_t i = 0; i < lidar_boxes->boxes.size(); ++i) {
             auto corners = project3DBoxCorners(lidar_boxes->boxes[i], cam_cfg);
-            draw3DBox(img, corners, cv::Scalar(0, 255, 0), 2);
+            draw3DBox(img, corners, cv::Scalar(0, 255, 0), 1);  // Reduced thickness from 2 to 1
         }
         
         // Highlight matched pairs and show IoU
@@ -790,18 +778,32 @@ private:
                 if (iou > iou_threshold_) {
                     matched_count++;
                     
-                    // Draw matched 3D box in yellow
+                    // Get color based on cone class
+                    cv::Scalar color;
+                    const std::string& cone_class = class_names[lidar_idx];
+                    if (cone_class == "Blue Cone" || cone_class == "blue cone") {
+                        color = cv::Scalar(255, 0, 0);  // Blue in BGR
+                    } else if (cone_class == "Yellow Cone" || cone_class == "yellow cone") {
+                        color = cv::Scalar(0, 255, 255);  // Yellow in BGR
+                    } else if (cone_class == "Red Cone" || cone_class == "red cone") {
+                        color = cv::Scalar(0, 0, 255);  // Red in BGR
+                    } else if (cone_class == "Orange Cone" || cone_class == "orange cone") {
+                        color = cv::Scalar(0, 165, 255);  // Orange in BGR
+                    } else {
+                        color = cv::Scalar(128, 128, 128);  // Gray for unknown
+                    }
+                    
+                    // Draw matched 3D box in cone color (slightly thicker)
                     auto corners = project3DBoxCorners(lidar_boxes->boxes[lidar_idx], cam_cfg);
-                    draw3DBox(img, corners, cv::Scalar(0, 255, 255), 3);
+                    draw3DBox(img, corners, color, 2);  // Reduced thickness from 3 to 2
                     
-                    // Draw matched YOLO box in yellow
-                    cv::rectangle(img, yolo_boxes[yolo_idx], cv::Scalar(0, 255, 255), 3);
-                    
-                    // Draw IoU score
-                    cv::Point text_pos(yolo_boxes[yolo_idx].x, yolo_boxes[yolo_idx].y - 5);
-                    std::string iou_text = "IoU: " + std::to_string(iou).substr(0, 4);
-                    cv::putText(img, iou_text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 
-                               0.5, cv::Scalar(0, 255, 255), 2);
+                    // Draw IoU score near the matched LiDAR box
+                    if (!corners.empty()) {
+                        cv::Point text_pos(corners[0].x, corners[0].y - 5);
+                        std::string iou_text = "IoU: " + std::to_string(iou).substr(0, 4);
+                        cv::putText(img, iou_text, text_pos, cv::FONT_HERSHEY_SIMPLEX, 
+                                   0.5, color, 2);
+                    }
                 }
             }
         }
@@ -817,82 +819,6 @@ private:
         debug_image_pubs_[cam_idx]->publish(*cv_ptr->toImageMsg());
     }
     
-    void publishRVizMarkers(const BoundingBox3DArray::ConstSharedPtr& lidar_boxes,
-                            const std::vector<std::string>& class_names)
-    {
-        visualization_msgs::msg::MarkerArray markers;
-        
-        // Delete old markers
-        visualization_msgs::msg::Marker delete_marker;
-        delete_marker.header = lidar_boxes->header;
-        delete_marker.ns = "fused_cones";
-        delete_marker.action = visualization_msgs::msg::Marker::DELETEALL;
-        markers.markers.push_back(delete_marker);
-        
-        // Create markers for each cone
-        for (size_t i = 0; i < lidar_boxes->boxes.size(); ++i) {
-            visualization_msgs::msg::Marker marker;
-            marker.header = lidar_boxes->header;
-            marker.ns = "fused_cones";
-            marker.id = i;
-            marker.type = visualization_msgs::msg::Marker::CYLINDER;
-            marker.action = visualization_msgs::msg::Marker::ADD;
-            
-            // Position
-            marker.pose.position = lidar_boxes->boxes[i].center.position;
-            marker.pose.orientation.w = 1.0;
-            
-            // Size (typical traffic cone dimensions)
-            marker.scale.x = 0.3;  // diameter
-            marker.scale.y = 0.3;
-            marker.scale.z = 0.5;  // height
-            
-            // Color based on class
-            marker.color.a = 0.8;
-            if (class_names[i] == "Blue Cone" || class_names[i] == "blue cone") {
-                marker.color.r = 0.0;
-                marker.color.g = 0.0;
-                marker.color.b = 1.0;
-            } else if (class_names[i] == "Yellow Cone" || class_names[i] == "yellow cone") {
-                marker.color.r = 1.0;
-                marker.color.g = 1.0;
-                marker.color.b = 0.0;
-            } else if (class_names[i] == "Red Cone" || class_names[i] == "red cone" || 
-                      class_names[i] == "Orange Cone" || class_names[i] == "orange cone") {
-                marker.color.r = 1.0;
-                marker.color.g = 0.5;
-                marker.color.b = 0.0;
-            } else {
-                // Unknown - gray
-                marker.color.r = 0.5;
-                marker.color.g = 0.5;
-                marker.color.b = 0.5;
-            }
-            
-            marker.lifetime = rclcpp::Duration(0, 200000000);  // 200ms
-            
-            markers.markers.push_back(marker);
-            
-            // Add text label
-            visualization_msgs::msg::Marker text_marker = marker;
-            text_marker.id = i + 1000;
-            text_marker.type = visualization_msgs::msg::Marker::TEXT_VIEW_FACING;
-            text_marker.pose.position.z += 0.7;  // Above the cone
-            text_marker.scale.z = 0.2;  // Text size
-            text_marker.color.r = 1.0;
-            text_marker.color.g = 1.0;
-            text_marker.color.b = 1.0;
-            text_marker.color.a = 1.0;
-            text_marker.text = class_names[i];
-            
-            markers.markers.push_back(text_marker);
-        }
-        
-        marker_pub_->publish(markers);
-        
-        RCLCPP_DEBUG(this->get_logger(), "Published %zu RViz markers", 
-                    lidar_boxes->boxes.size());
-    }
 };
 
 } // namespace nodes
