@@ -27,6 +27,7 @@
 #include "calico/utils/message_converter.hpp"
 #include <std_msgs/msg/multi_array_dimension.hpp>
 #include <atomic>
+#include <filesystem>
 
 namespace calico {
 namespace nodes {
@@ -55,11 +56,13 @@ public:
         if (config_file.empty()) {
             // Use package-relative default config path
             try {
-                auto package_share_dir = ament_index_cpp::get_package_share_directory("calico");
-                config_file = package_share_dir + "/config/multi_hungarian_config.yaml";
+                std::filesystem::path package_share_dir = ament_index_cpp::get_package_share_directory("calico");
+                std::filesystem::path config_path = package_share_dir / "config" / "multi_hungarian_config.yaml";
+                config_file = config_path.string();
             } catch (const std::exception& e) {
                 // Fallback to relative path from executable location
-                config_file = "../share/calico/config/multi_hungarian_config.yaml";
+                std::filesystem::path fallback_path = std::filesystem::path("..") / "share" / "calico" / "config" / "multi_hungarian_config.yaml";
+                config_file = fallback_path.string();
             }
             RCLCPP_WARN(this->get_logger(), "No config file specified, using default: %s", config_file.c_str());
         }

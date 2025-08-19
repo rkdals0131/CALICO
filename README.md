@@ -163,7 +163,7 @@ hungarian_association:
   
   # 캘리브레이션 파일
   calibration:
-    config_folder: "/home/user1/ROS2_Workspace/ros2_ws/src/hungarian_association/config"
+    config_folder: "${ROS2_WS}/src/hungarian_association/config"  # ROS2_WS 환경변수 또는 상대경로 사용
     camera_extrinsic_calibration: "multi_camera_extrinsic_calibration.yaml"
     camera_intrinsic_calibration: "multi_camera_intrinsic_calibration.yaml"
   

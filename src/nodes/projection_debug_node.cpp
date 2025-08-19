@@ -1,6 +1,7 @@
 #include "calico/nodes/projection_debug_node.hpp"
 #include <chrono>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <filesystem>
 
 namespace calico {
 namespace nodes {
@@ -57,8 +58,9 @@ ProjectionDebugNode::ProjectionDebugNode()
 void ProjectionDebugNode::loadCameraConfig() {
     if (config_file_.empty()) {
         // Use default config path
-        std::string package_share = ament_index_cpp::get_package_share_directory("calico");
-        config_file_ = package_share + "/config/multi_hungarian_config.yaml";
+        std::filesystem::path package_share = ament_index_cpp::get_package_share_directory("calico");
+        std::filesystem::path config_path = package_share / "config" / "multi_hungarian_config.yaml";
+        config_file_ = config_path.string();
     }
     
     utils::ConfigLoader config_loader;
