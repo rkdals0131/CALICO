@@ -1,4 +1,4 @@
-hungarian_association:
+calico:
   cones_topic: "/cone/lidar" 
   output_topic: "/cone/fused"
 
@@ -11,7 +11,7 @@ hungarian_association:
       detections_topic: "/camera_2/detections"
 
   calibration:
-    config_folder: "/home/user1/ROS2_Workspace/ros2_ws/src/calico/config/" 
+    config_folder: ""  # Leave empty to use package default directory
     camera_extrinsic_calibration: "multi_camera_extrinsic_calibration.yaml" 
     camera_intrinsic_calibration: "multi_camera_intrinsic_calibration.yaml" 
 
