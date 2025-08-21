@@ -1,4 +1,4 @@
-hungarian_association:
+calico:
   cones_topic: "/cone/lidar" 
   output_topic: "/cone/fused"
 

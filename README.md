@@ -149,11 +149,11 @@ ros2 launch calico calico_full.launch.py \
 
 ## ⚙️ 설정 파일
 
-CALICO는 기존 Python `hungarian_association` 패키지의 설정을 그대로 사용:
+CALICO는 자체 설정 파일을 사용:
 
 ```yaml
 # multi_hungarian_config.yaml
-hungarian_association:
+calico:
   # 매칭 파라미터
   max_matching_distance: 50.0  # 픽셀 단위
   
@@ -163,7 +163,7 @@ hungarian_association:
   
   # 캘리브레이션 파일
   calibration:
-    config_folder: "${ROS2_WS}/src/hungarian_association/config"  # ROS2_WS 환경변수 또는 상대경로 사용
+    config_folder: "${ROS2_WS}/src/calico/config"  # ROS2_WS 환경변수 또는 상대경로 사용
     camera_extrinsic_calibration: "multi_camera_extrinsic_calibration.yaml"
     camera_intrinsic_calibration: "multi_camera_intrinsic_calibration.yaml"
   
@@ -264,7 +264,7 @@ ros2 run calico multi_camera_fusion_node --ros-args --log-level debug
 
 ```bash
 # 기존 Python 실행
-ros2 run hungarian_association yolo_lidar_multicam_fusion_node
+ros2 run calico multi_iou_fusion_node  # 또는 이전 Python 버전 사용 가능
 
 # CALICO로 전환 (동일한 설정 파일 사용)
 ros2 launch calico multi_camera_fusion.launch.py \

@@ -151,10 +151,10 @@ private:
     {
         try {
             YAML::Node config = YAML::LoadFile(config_file);
-            auto ha_config = config["hungarian_association"];
+            auto calico_config = config["calico"];
             
             // Get topic names
-            lidar_boxes_topic_ = ha_config["cones_topic"].as<std::string>();
+            lidar_boxes_topic_ = calico_config["cones_topic"].as<std::string>();
             RCLCPP_INFO(this->get_logger(), "Configured LiDAR topic from config: %s", lidar_boxes_topic_.c_str());
             
             // Ensure we're using the BoundingBox3D topic
@@ -163,16 +163,16 @@ private:
                            lidar_boxes_topic_.c_str());
                 lidar_boxes_topic_ = "/cone/lidar/box";
             }
-            fused_output_topic_ = ha_config["output_topic"].as<std::string>();
+            fused_output_topic_ = calico_config["output_topic"].as<std::string>();
             
             // Get sync parameters
-            auto qos_config = ha_config["qos"];
+            auto qos_config = calico_config["qos"];
             sync_queue_size_ = qos_config["sync_queue_size"].as<int>(10);
             sync_slop_ = qos_config["sync_slop"].as<double>(0.1);
             
             // Load camera configurations
-            auto cameras = ha_config["cameras"];
-            auto calib_config = ha_config["calibration"];
+            auto cameras = calico_config["cameras"];
+            auto calib_config = calico_config["calibration"];
             std::string config_folder = calib_config["config_folder"].as<std::string>();
             
             // Handle relative paths - make them relative to config file directory

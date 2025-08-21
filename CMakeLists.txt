@@ -13,6 +13,7 @@ endif()
 # Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
@@ -67,6 +68,7 @@ set(dependencies
   yolo_msgs
   vision_msgs
   kalman_filters
+  ament_index_cpp
 )
 
 # Add library for utils
@@ -180,9 +182,8 @@ install(DIRECTORY launch/
   DESTINATION share/${PROJECT_NAME}/launch
 )
 
-# Install config files from hungarian_association package
-# Users can symlink or copy their config files
-install(DIRECTORY config/
+# Install config files
+install(DIRECTORY config
   DESTINATION share/${PROJECT_NAME}
 )
 
