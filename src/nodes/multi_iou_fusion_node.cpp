@@ -914,28 +914,40 @@ private:
     void tryProcessByArrival() {
         if (time_sync_mode_ == TimeSyncMode::HEADER) return; // Not used in header sync
         if (!last_lidar_boxes_) return;
-        // Ensure detections from all cameras are available and recent
-        for (size_t i = 0; i < camera_configs_.size(); ++i) {
-            if (!last_detections_[i]) return;
-            if (!withinSlop(last_lidar_recv_time_, last_det_recv_times_[i])) return;
-        }
-        // If visualization requires images, ensure those too
-        if (enable_debug_viz_) {
-            for (size_t i = 0; i < camera_configs_.size(); ++i) {
-                if (!last_images_[i]) return;
-                if (!withinSlop(last_lidar_recv_time_, last_img_recv_times_[i])) return;
-            }
-        }
-        // Build vectors to pass into processing
+
+        // Build detection inputs per camera. If a camera is missing or stale, use an empty array.
         std::vector<DetectionArray::ConstSharedPtr> det_msgs;
         det_msgs.reserve(camera_configs_.size());
-        for (size_t i = 0; i < camera_configs_.size(); ++i) det_msgs.push_back(last_detections_[i]);
-
-        std::vector<Image::ConstSharedPtr> img_msgs;
-        if (enable_debug_viz_) {
-            img_msgs.reserve(camera_configs_.size());
-            for (size_t i = 0; i < camera_configs_.size(); ++i) img_msgs.push_back(last_images_[i]);
+        for (size_t i = 0; i < camera_configs_.size(); ++i) {
+            bool usable = last_detections_[i] && withinSlop(last_lidar_recv_time_, last_det_recv_times_[i]);
+            if (usable) {
+                det_msgs.push_back(last_detections_[i]);
+            } else {
+                auto empty = std::make_shared<DetectionArray>();
+                empty->header = last_lidar_boxes_->header; // keep frame alignment
+                det_msgs.push_back(empty);
+            }
         }
+
+        // Debug image visualization must not gate publishing. Only include images if ALL are fresh.
+        std::vector<Image::ConstSharedPtr> img_msgs; // leave empty to disable viz when any is missing/stale
+        if (enable_debug_viz_) {
+            bool all_images_fresh = true;
+            for (size_t i = 0; i < camera_configs_.size(); ++i) {
+                if (!last_images_[i] || !withinSlop(last_lidar_recv_time_, last_img_recv_times_[i])) {
+                    all_images_fresh = false;
+                    break;
+                }
+            }
+            if (all_images_fresh) {
+                img_msgs.reserve(camera_configs_.size());
+                for (size_t i = 0; i < camera_configs_.size(); ++i) {
+                    img_msgs.push_back(last_images_[i]);
+                }
+            }
+        }
+
+        // Always process with available inputs; unmatched cones remain "Unknown".
         processFusion(last_lidar_boxes_, det_msgs, img_msgs);
     }
     

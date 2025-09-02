@@ -108,14 +108,17 @@ public:
         }
         
         // Setup QoS (align with RELIABLE publishers)
-        rclcpp::QoS qos(10);
-        qos.reliability(rclcpp::ReliabilityPolicy::Reliable);
+        rclcpp::QoS qos_rel(10);
+        qos_rel.reliability(rclcpp::ReliabilityPolicy::Reliable);
+        // IMU often publishes BestEffort (e.g., rosbag2 or sensor drivers)
+        rclcpp::QoS qos_bef(10);
+        qos_bef.reliability(rclcpp::ReliabilityPolicy::BestEffort);
         
         // Create subscribers according to sync mode
         if (use_imu_ && time_sync_mode_ == TimeSyncMode::HEADER) {
             // message_filters-based header sync
-            cones_sub_.subscribe(this, "/cone/fused", qos.get_rmw_qos_profile());
-            imu_sub_.subscribe(this, "/ouster/imu", qos.get_rmw_qos_profile());
+            cones_sub_.subscribe(this, "/cone/fused", qos_rel.get_rmw_qos_profile());
+            imu_sub_.subscribe(this, "/ouster/imu", qos_bef.get_rmw_qos_profile());
 
             sync_ = std::make_shared<Synchronizer>(
                 SyncPolicy(20),
@@ -128,7 +131,7 @@ public:
             // Arrival-time based processing
             if (use_imu_) {
                 imu_arrival_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
-                    "/ouster/imu", qos,
+                    "/ouster/imu", qos_bef,
                     [this](sensor_msgs::msg::Imu::SharedPtr msg){
                         last_imu_msg_ = msg;
                         last_imu_recv_time_ = nowForSync();
@@ -150,7 +153,7 @@ public:
                     });
             }
             cones_arrival_sub_ = this->create_subscription<custom_interface::msg::TrackedConeArray>(
-                "/cone/fused", qos,
+                "/cone/fused", qos_rel,
                 [this](custom_interface::msg::TrackedConeArray::SharedPtr msg){
                     // Convert to detections
                     auto cones = utils::MessageConverter::fromTrackedConeArray(*msg);
@@ -174,7 +177,7 @@ public:
         
         // Create publisher
         tracked_cones_pub_ = this->create_publisher<custom_interface::msg::TrackedConeArray>(
-            "/cone/fused/ukf", qos);
+            "/cone/fused/ukf", qos_rel);
         
         // Add parameter callback for dynamic reconfiguration
         parameter_callback_handle_ = this->add_on_set_parameters_callback(
