@@ -40,7 +40,7 @@ def generate_launch_description():
     
     enable_debug_viz_arg = DeclareLaunchArgument(
         'enable_debug_viz',
-        default_value='false',
+        default_value='true',
         description='Enable projection debug visualization'
     )
     
