@@ -13,7 +13,6 @@
 
 ## 주요 특징
 
-- **고성능**: Python 대비 5배 이상의 성능 향상
 - **시간 동기화**: 헤더 기반 동기화 + 수신시각(arrival) 기반 동기화(ROS/wall time)
 - **정확한 융합**: 자체 구현 Hungarian 알고리즘으로 최적 매칭
 - **멀티 카메라**: 2개 카메라 동시 지원 및 충돌 해결 (결손 시 graceful degrade 예정)
@@ -105,7 +104,6 @@ sudo apt install \
     libeigen3-dev \
     libyaml-cpp-dev \
     libopencv-dev \
-    # kalman_filters 라이브러리 (별도 설치 필요)
 
 # ROS2 패키지 (이미 설치되어 있어야 함)
 # - custom_interface
